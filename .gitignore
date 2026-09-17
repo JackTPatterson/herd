@@ -4,3 +4,4 @@ DerivedData/
 *.xcodeproj/xcuserdata/
 .DS_Store
 Herd.xcodeproj/
+Vendor/herdr-radar/
