@@ -15,6 +15,9 @@ struct HerdApp: App {
         settings.herdrConfigPath = session?.configPath
         settings.writeHerdrConfig()
         self.session = session
+        // Launched from inside an agent's shell, Herd would hand that agent's
+        // session markers to every pane it opens.
+        AgentEnvironment.clearInheritedMarkers()
         let socketPath = session?.socketPath ?? HerdrClient.socketPath(session: HerdrSession.name)
         let store = HerdrStore(client: HerdrClient(socketPath: socketPath))
         _store = StateObject(wrappedValue: store)

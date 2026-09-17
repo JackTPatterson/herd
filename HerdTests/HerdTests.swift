@@ -880,3 +880,30 @@ final class TipTests: XCTestCase {
         XCTAssertFalse(TabAutoName.isUnnamed("v2 rollout"))
     }
 }
+
+final class AgentEnvironmentTests: XCTestCase {
+    func testAgentSessionMarkersAreDroppedAndOtherVariablesKept() {
+        let environment = [
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_CHILD_SESSION": "abc",
+            "CLAUDE_CODE_SESSION_ID": "def",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+            "CODEX_SESSION_ID": "ghi",
+            "CURSOR_AGENT": "1",
+            "PATH": "/usr/bin",
+            "CLAUDE_CONFIG_DIR": "~/.claude",
+            "SESSION_MANAGER": "local/x",
+            "HOME": "/Users/dev",
+        ]
+        let dropped = AgentEnvironment.markers(in: environment)
+        XCTAssertEqual(dropped, ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT",
+                                 "CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID", "CURSOR_AGENT"])
+        let clean = AgentEnvironment.sanitized(environment)
+        // Config and unrelated variables survive.
+        XCTAssertEqual(clean["CLAUDE_CONFIG_DIR"], "~/.claude")
+        XCTAssertEqual(clean["PATH"], "/usr/bin")
+        XCTAssertEqual(clean["SESSION_MANAGER"], "local/x")
+        XCTAssertNil(clean["CLAUDECODE"])
+        XCTAssertTrue(AgentEnvironment.markers(in: ["PATH": "/bin"]).isEmpty)
+    }
+}

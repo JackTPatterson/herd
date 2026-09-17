@@ -215,6 +215,10 @@ struct HerdSettings: Codable, Equatable {
         delivery = "\(notifications.rawValue)"
         delay_seconds = \(Int(notificationDelaySeconds))
 
+        # Herd shows its own clipboard toast; only one of the two should.
+        [ui.toast.clipboard]
+        enabled = \(!clipboardToasts)
+
         [ui.sound]
         enabled = \(agentSounds)
 
