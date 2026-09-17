@@ -1188,3 +1188,120 @@ final class PromptLineTests: XCTestCase {
         XCTAssertFalse(line.isBrowsingHistory)
     }
 }
+
+final class CompletionTests: XCTestCase {
+    func testTheWordUnderTheCaretIsFoundWithItsCommand() {
+        let start = CompletionContext.at(caret: 2, in: "gi")
+        XCTAssertEqual(start.token, "gi")
+        XCTAssertTrue(start.isCommandPosition)
+        XCTAssertNil(start.command)
+
+        let argument = CompletionContext.at(caret: 8, in: "git comm")
+        XCTAssertEqual(argument.token, "comm")
+        XCTAssertEqual(argument.command, "git")
+        XCTAssertEqual(argument.range, 4..<8)
+
+        // Mid-word edits complete the whole word, not just what precedes.
+        let middle = CompletionContext.at(caret: 6, in: "git status")
+        XCTAssertEqual(middle.token, "status")
+        XCTAssertEqual(middle.range, 4..<10)
+        // A trailing space starts a fresh word.
+        let fresh = CompletionContext.at(caret: 4, in: "git ")
+        XCTAssertEqual(fresh.token, "")
+        XCTAssertEqual(fresh.command, "git")
+    }
+
+    func testCommandPositionOffersCommandsBuiltinsAndHistory() {
+        let context = CompletionContext.at(caret: 2, in: "ca")
+        let results = Completions.suggestions(
+            for: context,
+            commands: ["cargo", "cat", "curl"],
+            history: ["cargo test --all", "cat notes.md"]
+        )
+        XCTAssertEqual(results.first?.value, "cat")
+        XCTAssertTrue(results.contains { $0.value == "cargo" && $0.kind == .command })
+        XCTAssertTrue(results.contains { $0.value == "cargo test --all" && $0.kind == .history })
+        XCTAssertFalse(results.contains { $0.value == "curl" })
+    }
+
+    func testArgumentPositionOffersSubcommandsFilesFlagsAndBranches() {
+        let subcommand = Completions.suggestions(for: CompletionContext.at(caret: 6, in: "git co"))
+        XCTAssertEqual(subcommand.first?.value, "commit")
+        // Branches belong after the commands that take one, not everywhere.
+        XCTAssertFalse(subcommand.contains { $0.kind == .branch })
+        let branch = Completions.suggestions(
+            for: CompletionContext.at(caret: 13, in: "git switch fe"),
+            branches: ["main", "feature/auth"]
+        )
+        XCTAssertEqual(branch.first?.value, "feature/auth")
+        XCTAssertEqual(branch.first?.kind, .branch)
+
+        let files = Completions.suggestions(
+            for: CompletionContext.at(caret: 5, in: "cat RE"),
+            entries: [("README.md", false), ("Resources", true)]
+        )
+        XCTAssertEqual(Set(files.map(\.value)), ["README.md", "Resources/"])
+        XCTAssertEqual(files.first { $0.value == "Resources/" }?.kind, .directory)
+
+        let flags = Completions.suggestions(
+            for: CompletionContext.at(caret: 6, in: "git --"),
+            history: ["git --no-pager log", "git commit --amend"]
+        )
+        XCTAssertTrue(flags.contains { $0.value == "--no-pager" && $0.kind == .flag })
+    }
+
+    func testHarvestingFlagsAndFollowingWordsFromHistory() {
+        let history = ["git commit --amend -m x", "npm run build", "git push --force-with-lease", "npm test"]
+        XCTAssertEqual(Completions.flags(in: history, command: "git"), ["--amend", "--force-with-lease", "-m"])
+        XCTAssertEqual(Completions.secondWord(of: history, command: "npm"), ["run", "test"])
+        XCTAssertTrue(Completions.flags(in: history, command: "cargo").isEmpty)
+    }
+}
+
+final class PromptLineSelectionTests: XCTestCase {
+    func testSelectingReplacingAndDeleting() {
+        var line = PromptLine(text: "git status")
+        line.extendingSelection { $0.moveWordLeft() }
+        XCTAssertEqual(line.selectedText, "status")
+        line.insert("commit")
+        XCTAssertEqual(line.text, "git commit")
+        XCTAssertNil(line.selection)
+
+        line.selectAll()
+        XCTAssertEqual(line.selectedText, "git commit")
+        line.deleteBackward()
+        XCTAssertTrue(line.isEmpty)
+    }
+
+    func testUndoAndRedoWalkBackThroughEdits() {
+        var line = PromptLine()
+        line.insert("git")
+        line.insert(" status")
+        line.deleteWordBackward()
+        XCTAssertEqual(line.text, "git ")
+        line.undo()
+        XCTAssertEqual(line.text, "git status")
+        line.undo()
+        XCTAssertEqual(line.text, "git")
+        line.redo()
+        XCTAssertEqual(line.text, "git status")
+        // A fresh edit clears the redo trail.
+        line.insert("!")
+        line.redo()
+        XCTAssertEqual(line.text, "git status!")
+        // Undo on an untouched line is harmless.
+        var empty = PromptLine()
+        empty.undo()
+        empty.redo()
+        XCTAssertTrue(empty.isEmpty)
+    }
+
+    func testReplacingTheWordUnderTheCaretForCompletions() {
+        var line = PromptLine(text: "git comm", caret: 8)
+        line.replace(range: 4..<8, with: "commit")
+        XCTAssertEqual(line.text, "git commit")
+        XCTAssertEqual(line.caret, 10)
+        line.undo()
+        XCTAssertEqual(line.text, "git comm")
+    }
+}

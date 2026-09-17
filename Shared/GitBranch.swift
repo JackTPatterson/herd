@@ -29,6 +29,18 @@ enum GitBranch {
         return nil
     }
 
+    /// The working tree a directory belongs to, or nil outside a repo.
+    static func repositoryRoot(for directory: String) -> String? {
+        var url = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL
+        while url.path != "/" {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) {
+                return url.path
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
     static func branch(fromHead head: String?) -> String? {
         guard let head = head?.trimmingCharacters(in: .whitespacesAndNewlines), !head.isEmpty else { return nil }
         let prefix = "ref: refs/heads/"

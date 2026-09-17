@@ -15,24 +15,22 @@ struct PromptEditorView: View {
             let font = family.isEmpty
                 ? Font.system(size: settings.values.fontSize, design: .monospaced)
                 : Font.custom(family, fixedSize: settings.values.fontSize)
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                highlighted
+            // The line is one run of text; the caret is drawn over it at its
+            // column rather than placed between views, so blinking and moving
+            // it never change the layout.
+            ZStack(alignment: .topLeading) {
+                Theme.terminalBackground
+                (highlighted + ghostText)
                     .font(font)
-                if caretVisible {
-                    Rectangle()
-                        .fill(Theme.accent)
-                        .frame(width: max(1.5, anchor.cellWidth * 0.12), height: anchor.cellHeight)
-                        .offset(y: 2)
-                }
-                if let ghost {
-                    Text(ghost)
-                        .font(font)
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                Spacer(minLength: 0)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Rectangle()
+                    .fill(Theme.accent)
+                    .frame(width: max(1.5, anchor.cellWidth * 0.12), height: anchor.cellHeight)
+                    .opacity(caretVisible ? 1 : 0)
+                    .offset(x: CGFloat(editor.line.caret) * anchor.cellWidth)
             }
-            .frame(height: anchor.cellHeight, alignment: .leading)
-            .background(Theme.terminalBackground)
+            .frame(height: anchor.cellHeight, alignment: .topLeading)
             .onAppear { blink() }
         }
     }
@@ -56,9 +54,10 @@ struct PromptEditorView: View {
         return rendered
     }
 
-    private var ghost: String? {
-        guard let suggestion = editor.suggestion, suggestion.hasPrefix(editor.line.text) else { return nil }
-        return String(suggestion.dropFirst(editor.line.text.count))
+    /// The completion after the caret, greyed out; empty when there is none.
+    private var ghostText: Text {
+        guard let suggestion = editor.suggestion, suggestion.hasPrefix(editor.line.text) else { return Text("") }
+        return Text(String(suggestion.dropFirst(editor.line.text.count))).foregroundStyle(Theme.textTertiary)
     }
 
     private func color(for role: ShellSyntax.Role) -> Color {

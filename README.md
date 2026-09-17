@@ -177,6 +177,18 @@ Settings → Agents turns it off.
 History comes from the shells' own files (zsh, bash and fish formats), ranked
 by how often and how recently you have run each command.
 
+**Completions.** Tab opens a menu for the word under the caret, built from
+what the machine actually has: executables on PATH and shell builtins in
+command position; this folder's files and directories; a command's
+subcommands; the flags that command has been given before; this repo's
+branches after `git switch`, `checkout`, `merge` and `rebase`; and whole
+lines from history. ↑/↓ move, Return or Tab accepts, Escape closes the menu
+without giving up the line. When Herd has nothing to offer, Tab goes to the
+shell so its own completion still works.
+
+**Editing.** ⌃R searches history in the same menu. ⇧ with the arrows selects,
+⌘C/⌘X/⌘V copy, cut and paste, ⌘A selects the line, and ⌘Z/⇧⌘Z undo and redo.
+
 ## Terminal text position
 
 Settings → Terminal chooses where a pane's output sits while it doesn't fill

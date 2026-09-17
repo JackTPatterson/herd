@@ -15,6 +15,7 @@ struct RootView: View {
 
     /// Where the terminal starts across the window.
     private var sidebarInset: CGFloat { ui.sidebarVisible ? Theme.sidebarWidth + 1 : 0 }
+    private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -120,6 +121,16 @@ struct RootView: View {
                     .offset(x: sidebarInset + anchor.origin.x,
                             y: Theme.titleBarHeight + Theme.tabBarHeight + anchor.origin.y)
                     .allowsHitTesting(false)
+            }
+            if prompt.isActive, prompt.completionsOpen, let anchor = prompt.anchor {
+                // Under the word being completed, or above it near the foot
+                // of the window.
+                let top = Theme.titleBarHeight + Theme.tabBarHeight + anchor.origin.y
+                let below = top + anchor.cellHeight + 4
+                let fitsBelow = below + 240 < windowHeight
+                CompletionMenuView(editor: prompt)
+                    .offset(x: sidebarInset + anchor.origin.x + CGFloat(prompt.completionColumn) * anchor.cellWidth,
+                            y: fitsBelow ? below : max(0, top - 244))
             }
         }
         .overlay(alignment: .topLeading) {

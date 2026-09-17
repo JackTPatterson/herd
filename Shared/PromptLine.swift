@@ -10,6 +10,17 @@ struct PromptLine: Equatable {
     /// Commands stepped through with the up arrow.
     private var historyCursor: Int?
     private var draftBeforeHistory: String?
+    /// Where a shift-selection started; nil when nothing is selected.
+    private(set) var selectionAnchor: Int?
+    /// One step of the undo trail; a struct so the line stays Equatable.
+    private struct Snapshot: Equatable {
+        let text: String
+        let caret: Int
+    }
+
+    private var undoStack: [Snapshot] = []
+    private var redoStack: [Snapshot] = []
+    private static let undoLimit = 100
 
     init(text: String = "", caret: Int? = nil) {
         self.text = text
@@ -19,9 +30,74 @@ struct PromptLine: Equatable {
     var isEmpty: Bool { text.isEmpty }
     var caretAtEnd: Bool { caret >= text.count }
 
+    /// The selected span, if any, as character offsets.
+    var selection: Range<Int>? {
+        guard let anchor = selectionAnchor, anchor != caret else { return nil }
+        return min(anchor, caret)..<max(anchor, caret)
+    }
+
+    var selectedText: String? {
+        selection.map { String(Array(text)[$0]) }
+    }
+
+    /// Records the line so the next edit can be undone.
+    private mutating func checkpoint() {
+        undoStack.append(Snapshot(text: text, caret: caret))
+        if undoStack.count > Self.undoLimit { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    mutating func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(Snapshot(text: text, caret: caret))
+        text = previous.text
+        caret = min(previous.caret, text.count)
+        selectionAnchor = nil
+        forgetHistory()
+    }
+
+    mutating func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(Snapshot(text: text, caret: caret))
+        text = next.text
+        caret = min(next.caret, text.count)
+        selectionAnchor = nil
+        forgetHistory()
+    }
+
+    /// Replaces the selection, if there is one. True when it removed text.
+    @discardableResult
+    mutating func deleteSelection() -> Bool {
+        guard let range = selection else { return false }
+        checkpoint()
+        text.removeSubrange(characterIndex(range.lowerBound)..<characterIndex(range.upperBound))
+        caret = range.lowerBound
+        selectionAnchor = nil
+        forgetHistory()
+        return true
+    }
+
+    mutating func selectAll() {
+        selectionAnchor = 0
+        caret = text.count
+    }
+
+    mutating func clearSelection() { selectionAnchor = nil }
+
+    /// Starts or extends a selection around a caret move.
+    mutating func extendingSelection(_ move: (inout PromptLine) -> Void) {
+        if selectionAnchor == nil { selectionAnchor = caret }
+        move(&self)
+    }
+
     // MARK: - Editing
 
     mutating func insert(_ string: String) {
+        if selection != nil {
+            deleteSelection()
+        } else {
+            checkpoint()
+        }
         let index = characterIndex(caret)
         text.insert(contentsOf: string, at: index)
         caret += string.count
@@ -29,21 +105,27 @@ struct PromptLine: Equatable {
     }
 
     mutating func deleteBackward() {
+        if deleteSelection() { return }
         guard caret > 0 else { return }
+        checkpoint()
         text.remove(at: characterIndex(caret - 1))
         caret -= 1
         forgetHistory()
     }
 
     mutating func deleteForward() {
+        if deleteSelection() { return }
         guard caret < text.count else { return }
+        checkpoint()
         text.remove(at: characterIndex(caret))
         forgetHistory()
     }
 
     /// ⌥⌫ / ⌃W: remove the word before the caret, and the spaces it sits on.
     mutating func deleteWordBackward() {
+        if deleteSelection() { return }
         guard caret > 0 else { return }
+        checkpoint()
         var index = caret
         while index > 0, character(at: index - 1) == " " { index -= 1 }
         while index > 0, character(at: index - 1) != " " { index -= 1 }
@@ -54,6 +136,7 @@ struct PromptLine: Equatable {
 
     /// ⌃U: clear to the start of the line.
     mutating func deleteToStart() {
+        checkpoint()
         text.removeSubrange(text.startIndex..<characterIndex(caret))
         caret = 0
         forgetHistory()
@@ -61,11 +144,13 @@ struct PromptLine: Equatable {
 
     /// ⌃K: clear to the end of the line.
     mutating func deleteToEnd() {
+        checkpoint()
         text.removeSubrange(characterIndex(caret)..<text.endIndex)
         forgetHistory()
     }
 
     mutating func clear() {
+        checkpoint()
         text = ""
         caret = 0
         forgetHistory()
@@ -77,6 +162,17 @@ struct PromptLine: Equatable {
     mutating func moveRight() { caret = min(text.count, caret + 1) }
     mutating func moveToStart() { caret = 0 }
     mutating func moveToEnd() { caret = text.count }
+
+    /// Replaces the word under the caret, for accepting a completion.
+    mutating func replace(range: Range<Int>, with value: String) {
+        checkpoint()
+        let lower = characterIndex(range.lowerBound)
+        let upper = characterIndex(min(range.upperBound, text.count))
+        text.replaceSubrange(lower..<upper, with: value)
+        caret = range.lowerBound + value.count
+        selectionAnchor = nil
+        forgetHistory()
+    }
 
     mutating func moveWordLeft() {
         var index = caret

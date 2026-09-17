@@ -13,6 +13,14 @@ final class PromptEditor: ObservableObject {
     @Published private(set) var anchor: HerdTerminalRuntime.CursorAnchor?
     /// The greyed-out completion after the caret.
     @Published private(set) var suggestion: String?
+    /// The completion menu, when it is open.
+    @Published private(set) var completions: [Completion] = []
+    @Published private(set) var completionIndex = 0
+    /// Column the menu is anchored to: the start of the word being completed.
+    @Published private(set) var completionColumn = 0
+    /// ⌃R: the menu is searching history rather than completing a word.
+    @Published private(set) var isSearchingHistory = false
+    var completionsOpen: Bool { !completions.isEmpty }
 
     private unowned let store: HerdrStore
     private var history = CommandHistory()
@@ -20,6 +28,10 @@ final class PromptEditor: ObservableObject {
     /// The pane being typed into; the editor closes if focus moves.
     private var paneId: String?
     private var anchorTimer: Timer?
+    /// Executables on PATH, read once; branches per working folder.
+    private var pathCommands: [String] = []
+    private var branches: [String] = []
+    private var cwd: String?
 
     init(store: HerdrStore) {
         self.store = store
@@ -48,7 +60,11 @@ final class PromptEditor: ObservableObject {
     /// Called before the terminal sees a key; true means Herd took it.
     func handleKeyDown(_ event: NSEvent) -> Bool {
         guard SettingsStore.shared.values.promptEditor else { return false }
-        guard !event.modifierFlags.contains(.command) else { return false }
+        if event.modifierFlags.contains(.command) {
+            // Editing shortcuts belong to the line while it has the keyboard.
+            guard isActive else { return false }
+            return handleCommandKey(event)
+        }
         guard isActive || store.focusedPaneAtPrompt else {
             log("ignored key, atPrompt=\(store.focusedPaneAtPrompt) process=\(String(describing: store.focusedProcess))")
             return false
@@ -62,10 +78,19 @@ final class PromptEditor: ObservableObject {
         switch event.keyCode {
         case 36, 76: // Return
             guard isActive else { return false }
+            if completionsOpen {
+                acceptCompletion()
+                return true
+            }
             submit()
             return true
         case 53: // Escape
             guard isActive else { return false }
+            // The menu closes first; a second escape hands the line back.
+            if completionsOpen {
+                closeCompletions()
+                return true
+            }
             flush()
             return true
         case 51: // Backspace
@@ -85,11 +110,22 @@ final class PromptEditor: ObservableObject {
             return true
         case 123: // ←
             guard isActive else { return false }
-            option ? line.moveWordLeft() : line.moveLeft()
+            if shift {
+                line.extendingSelection { option ? $0.moveWordLeft() : $0.moveLeft() }
+            } else {
+                line.clearSelection()
+                option ? line.moveWordLeft() : line.moveLeft()
+            }
             refreshSuggestion()
             return true
         case 124: // →
             guard isActive else { return false }
+            if shift {
+                line.extendingSelection { option ? $0.moveWordRight() : $0.moveRight() }
+                refreshSuggestion()
+                return true
+            }
+            line.clearSelection()
             if option {
                 if !line.acceptWord(of: suggestion) { line.moveWordRight() }
             } else if line.caretAtEnd, line.accept(suggestion: suggestion) {
@@ -101,12 +137,23 @@ final class PromptEditor: ObservableObject {
             return true
         case 126, 125: // ↑ ↓
             guard isActive else { return false }
+            if completionsOpen {
+                let count = completions.count
+                completionIndex = (completionIndex + (event.keyCode == 126 ? -1 : 1) + count) % count
+                return true
+            }
             line.stepHistory(event.keyCode == 126 ? 1 : -1, matches: historyMatches)
             refreshSuggestion()
             return true
-        case 48: // Tab — completion belongs to the shell.
+        case 48: // Tab
             guard isActive else { return false }
-            flush(then: "\t")
+            if completionsOpen {
+                acceptCompletion()
+            } else {
+                openCompletions()
+                // Nothing of Herd's to offer: let the shell try its own.
+                if !completionsOpen { flush(then: "\t") }
+            }
             return true
         default:
             break
@@ -121,6 +168,9 @@ final class PromptEditor: ObservableObject {
             case "k": line.deleteToEnd()
             case "w": line.deleteWordBackward()
             case "f": _ = line.accept(suggestion: suggestion)
+            case "r":
+                searchHistory()
+                return true
             case "c":
                 cancel()
                 return true
@@ -143,6 +193,8 @@ final class PromptEditor: ObservableObject {
         if !isActive { activate() }
         line.insert(text)
         refreshSuggestion()
+        // A menu that is open follows what is being typed.
+        if completionsOpen { openCompletions() }
         log("text=\(line.text) suggestion=\(suggestion ?? "-") active=\(isActive) anchor=\(anchor != nil)")
         return true
     }
@@ -158,6 +210,9 @@ final class PromptEditor: ObservableObject {
 
     private func activate() {
         paneId = store.snapshot.focusedPaneId ?? store.snapshot.panes.first(where: \.focused)?.paneId
+        let pane = store.snapshot.panes.first { $0.paneId == paneId }
+        cwd = pane?.effectiveCwd
+        loadCompletionSources()
         line = PromptLine()
         anchor = HerdTerminalRuntime.cursorAnchor()
         isActive = true
@@ -184,14 +239,129 @@ final class PromptEditor: ObservableObject {
         if current != anchor { anchor = current }
     }
 
+    /// PATH and branches are disk work; read them off the main thread.
+    private func loadCompletionSources() {
+        let folder = cwd ?? NSHomeDirectory()
+        let needsPath = pathCommands.isEmpty
+        DispatchQueue.global(qos: .userInitiated).async {
+            let commands = needsPath ? Completions.commandsOnPath() : []
+            let branches = Completions.branches(in: folder)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if needsPath { self.pathCommands = commands }
+                self.branches = branches
+            }
+        }
+    }
+
     private func deactivate() {
         isActive = false
+        closeCompletions()
         line = PromptLine()
         suggestion = nil
         anchor = nil
         paneId = nil
         anchorTimer?.invalidate()
         anchorTimer = nil
+    }
+
+    // MARK: - Completions
+
+    /// Builds the menu for the word under the caret, from what the machine
+    /// actually has: PATH, this folder, this repo's branches, your history.
+    private func openCompletions() {
+        let context = CompletionContext.at(caret: line.caret, in: line.text)
+        let folder = cwd ?? NSHomeDirectory()
+        let results = Completions.suggestions(
+            for: context,
+            commands: pathCommands,
+            entries: Completions.entries(for: context.token, cwd: folder),
+            history: history.entries.map(\.command),
+            branches: branches
+        )
+        completions = results
+        completionIndex = 0
+        completionColumn = context.range.lowerBound
+        isSearchingHistory = false
+    }
+
+    /// ⌃R: the same menu, searching everything you have run.
+    private func searchHistory() {
+        let needle = line.text
+        let matches = needle.isEmpty
+            ? history.entries.prefix(30).map(\.command)
+            : history.ranked(matching: needle, limit: 30)
+        let fuzzy = needle.isEmpty ? [] : history.entries.map(\.command).filter {
+            !$0.hasPrefix(needle) && FuzzyMatcher.match(needle, in: $0) != nil
+        }
+        completions = (matches + fuzzy).prefix(30).map { Completion(value: $0, kind: .history) }
+        completionIndex = 0
+        completionColumn = 0
+        isSearchingHistory = !completions.isEmpty
+    }
+
+    private func closeCompletions() {
+        completions = []
+        completionIndex = 0
+        isSearchingHistory = false
+    }
+
+    /// Puts the highlighted entry into the line.
+    func acceptCompletion() {
+        guard completions.indices.contains(completionIndex) else { return }
+        let completion = completions[completionIndex]
+        if isSearchingHistory {
+            line.replace(range: 0..<line.text.count, with: completion.value)
+        } else {
+            let context = CompletionContext.at(caret: line.caret, in: line.text)
+            // Directories keep the slash so the next word continues the path.
+            let value = completion.kind == .directory ? completion.value : completion.value + " "
+            line.replace(range: context.range, with: value)
+        }
+        closeCompletions()
+        refreshSuggestion()
+    }
+
+    func selectCompletion(_ index: Int) {
+        guard completions.indices.contains(index) else { return }
+        completionIndex = index
+    }
+
+    // MARK: - Command-key editing
+
+    private func handleCommandKey(_ event: NSEvent) -> Bool {
+        let shift = event.modifierFlags.contains(.shift)
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "v":
+            guard let pasted = NSPasteboard.general.string(forType: .string) else { return true }
+            // A trailing newline would run the command; paste the text only.
+            line.insert(pasted.trimmingCharacters(in: .newlines))
+            refreshSuggestion()
+            return true
+        case "c":
+            guard let selected = line.selectedText else { return false }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(selected, forType: .string)
+            ClipboardWatcher.shared.acknowledge()
+            return true
+        case "x":
+            guard let selected = line.selectedText else { return false }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(selected, forType: .string)
+            ClipboardWatcher.shared.acknowledge()
+            line.deleteSelection()
+            refreshSuggestion()
+            return true
+        case "a":
+            line.selectAll()
+            return true
+        case "z":
+            shift ? line.redo() : line.undo()
+            refreshSuggestion()
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Sending
@@ -236,7 +406,7 @@ final class PromptEditor: ObservableObject {
     // MARK: - Suggestions
 
     private func refreshSuggestion() {
-        guard line.caretAtEnd, !line.isBrowsingHistory else {
+        guard line.caretAtEnd, !line.isBrowsingHistory, line.selection == nil else {
             suggestion = nil
             return
         }
