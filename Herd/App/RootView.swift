@@ -5,6 +5,7 @@ struct RootView: View {
     @ObservedObject var store: HerdrStore
     @ObservedObject var ui: UIState
     let session: HerdrSession?
+    @ObservedObject var slash: SlashController
     @StateObject private var palette = PaletteModel()
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
@@ -47,6 +48,11 @@ struct RootView: View {
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == MarketplaceWindow.id {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
             }
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "slash" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    slash.open(paneId: store.snapshot.panes.first?.paneId ?? "", agent: "claude")
+                }
+            }
             #endif
         }
         .onChange(of: store.lastError) { _, error in
@@ -54,6 +60,18 @@ struct RootView: View {
             ToastCenter.shared.fail(nil, "herdr request failed", detail: error)
             store.lastError = nil
         }
+        .overlay(alignment: .center) {
+            if slash.isOpen {
+                SlashPaletteView(slash: slash)
+                    .padding(.bottom, 40)
+                    .transition(motion.animates(.palette)
+                        ? .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                        : .identity)
+            }
+        }
+        .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: slash.isOpen)
+        .onChange(of: slash.isOpen) { _, open in DebugSnapshot.overlayVisible = open }
+        .onChange(of: store.snapshot.focusedPaneId) { _, _ in slash.resetTyping() }
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }

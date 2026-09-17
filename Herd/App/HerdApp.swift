@@ -6,6 +6,7 @@ struct HerdApp: App {
     @StateObject private var store: HerdrStore
     @StateObject private var ui = UIState()
     @StateObject private var marketplace: MarketplaceStore
+    @StateObject private var slash: SlashController
     private let session: HerdrSession?
 
     init() {
@@ -18,13 +19,16 @@ struct HerdApp: App {
         let store = HerdrStore(client: HerdrClient(socketPath: socketPath))
         _store = StateObject(wrappedValue: store)
         _marketplace = StateObject(wrappedValue: MarketplaceStore(herdr: store))
+        let slash = SlashController(store: store)
+        _slash = StateObject(wrappedValue: slash)
+        HerdKeyHook.controller = slash
         settings.reloadHerdr = { [weak store] in store?.reloadHerdrConfig(quiet: true) }
         HerdTerminalRuntime.configure(overrides: settings.values.ghosttyConfig + "\n" + Theme.herdShortcutUnbinds)
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView(store: store, ui: ui, session: session)
+            RootView(store: store, ui: ui, session: session, slash: slash)
                 .frame(minWidth: 720, minHeight: 420)
                 .onAppear {
                     store.start()
@@ -175,5 +179,17 @@ enum MarketplaceWindow {
     static func open() {
         NSApp.activate(ignoringOtherApps: true)
         opener?()
+    }
+}
+
+
+/// Static bridge so the Ghostty surface can consult the slash menu without
+/// knowing about Herd's stores.
+@MainActor
+enum HerdKeyHook {
+    static weak var controller: SlashController?
+
+    static func handleKeyDown(_ event: NSEvent) -> Bool {
+        controller?.handleKeyDown(event) ?? false
     }
 }

@@ -714,6 +714,8 @@ extension Ghostty {
         }
 
         override func keyDown(with event: NSEvent) {
+            // Herd's own `/` menu gets first refusal on agent panes.
+            if HerdKeyHook.handleKeyDown(event) { return }
             guard let surface = self.surface else {
                 self.interpretKeyEvents([event])
                 return

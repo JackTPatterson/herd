@@ -594,3 +594,55 @@ final class AgentLibraryTests: XCTestCase {
         XCTAssertThrowsError(try AgentLibrary.install(adopted, into: other))
     }
 }
+
+final class SlashCommandTests: XCTestCase {
+    private var home = ""
+
+    override func setUpWithError() throws {
+        home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let host = AgentHosts.host("claude", home: home)!
+        try FileManager.default.createDirectory(atPath: host.promptsDirectory + "/git", withIntermediateDirectories: true)
+        try "---\ndescription: Review the diff\n---\nReview it.".write(toFile: host.promptPath("review-diff"), atomically: true, encoding: .utf8)
+        try "# Amend\n\nAmend the last commit.".write(toFile: host.promptsDirectory + "/git/amend.md", atomically: true, encoding: .utf8)
+        // A plugin's commands live under its cached version folder.
+        let pluginCommands = "\(host.home)/plugins/cache/official/formatter/1.2.0/commands"
+        try FileManager.default.createDirectory(atPath: pluginCommands, withIntermediateDirectories: true)
+        try "---\ndescription: Format the repo\n---\n".write(toFile: pluginCommands + "/format.md", atomically: true, encoding: .utf8)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(atPath: home)
+    }
+
+    func testCommandsCombineBuiltInsUserFilesAndPlugins() throws {
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.createDirectory(atPath: project + "/.claude/commands", withIntermediateDirectories: true)
+        try "---\ndescription: Ship it\n---\n".write(toFile: project + "/.claude/commands/ship.md", atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: project) }
+
+        let commands = SlashCommands.all(agent: "claude", cwd: project, home: home)
+        let byName = Dictionary(uniqueKeysWithValues: commands.map { ($0.name, $0) })
+        XCTAssertEqual(byName["compact"]?.origin, .builtIn)
+        XCTAssertEqual(byName["review-diff"]?.origin, .user)
+        XCTAssertEqual(byName["review-diff"]?.summary, "Review the diff")
+        XCTAssertEqual(byName["git:amend"]?.summary, "Amend the last commit.")
+        XCTAssertEqual(byName["ship"]?.origin, .project)
+        XCTAssertEqual(byName["format"]?.origin, .plugin("formatter"))
+        XCTAssertEqual(byName["review-diff"]?.insertion, "/review-diff")
+
+        // Codex gets its own built-ins, not Claude's.
+        let codex = SlashCommands.all(agent: "codex", cwd: nil, home: home).map(\.name)
+        XCTAssertTrue(codex.contains("approvals"))
+        XCTAssertFalse(codex.contains("vim"))
+    }
+
+    func testMatchingPrefersPrefixMatchesAndSearchesSummaries() {
+        let commands = SlashCommands.all(agent: "claude", cwd: nil, home: home)
+        XCTAssertEqual(SlashCommands.matching("comp", in: commands).first?.name, "compact")
+        XCTAssertEqual(SlashCommands.matching("rev", in: commands).first?.name, "review")
+        // Only the summary mentions vim bindings' "toggle".
+        XCTAssertTrue(SlashCommands.matching("toggle", in: commands).contains { $0.name == "vim" })
+        XCTAssertTrue(SlashCommands.matching("zzz", in: commands).isEmpty)
+        XCTAssertEqual(SlashCommands.matching("", in: commands).count, commands.count)
+    }
+}

@@ -349,6 +349,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Herd's slash command menu",
+                detail: "Typing / in an agent pane opens Herd's own command list instead of the agent's in-terminal one."
+            ) {
+                Toggle("", isOn: $settings.values.slashMenu).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Restore recent terminal output",
                 detail: "Saves pane contents so they reappear after a restart. Output can include secrets."
             ) {
