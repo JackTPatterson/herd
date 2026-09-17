@@ -41,6 +41,11 @@ final class HerdrStore: ObservableObject {
     private var manuallyNamedTabIds: Set<String> = []
     private var pendingTabNames: [String: TabAutoName.Candidate] = [:]
     private var clockTimer: Timer?
+    /// What the focused pane is running, for the prompt editor: nil until
+    /// the first look.
+    @Published private(set) var focusedProcess: ShellPrompt.ProcessInfo?
+    /// True while the focused pane sits at its shell's own prompt.
+    var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
     @Published private(set) var isConnected = false
     @Published var lastError: String?
 
@@ -158,6 +163,12 @@ final class HerdrStore: ObservableObject {
             let result = Result { try client.snapshot() }
             // Disk reads stay off the main thread.
             let snapshot = try? result.get()
+            // One extra call: what the focused pane is actually running.
+            let focusedPaneId = snapshot?.focusedPaneId
+                ?? snapshot?.panes.first(where: \.focused)?.paneId
+            let process = focusedPaneId.flatMap { paneId in
+                (try? client.call("pane.process_info", ["pane_id": paneId])).flatMap(ShellPrompt.parse)
+            }
             let branches = snapshot.map(Self.readBranches)
             let inferred = snapshot.flatMap { snapshot in
                 inference.map { AgentSessionFiles.infer(agents: snapshot.agents, firstSeen: $0) }
@@ -166,6 +177,7 @@ final class HerdrStore: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success(let snapshot):
+                    if process != self.focusedProcess { self.focusedProcess = process }
                     self.recovery.observe(snapshot, inferred: inferred ?? [:])
                     self.apply(snapshot, branches: branches ?? [:])
                 case .failure(let error):

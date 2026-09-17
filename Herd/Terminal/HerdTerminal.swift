@@ -46,6 +46,39 @@ final class HerdTerminalRuntime {
         shared.ghosttyApp?.applyBackgroundBlur(to: window)
     }
 
+    /// Where the terminal's cursor is, in the window's terminal view, plus
+    /// the cell size — the anchor Herd draws its own prompt line at.
+    struct CursorAnchor: Equatable {
+        /// Origin of the cursor cell inside the terminal view.
+        let origin: CGPoint
+        let cellWidth: CGFloat
+        let cellHeight: CGFloat
+        /// Columns left on the cursor's row.
+        let columnsRemaining: Int
+    }
+
+    @MainActor
+    static func cursorAnchor() -> CursorAnchor? {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible),
+              let content = window.contentView,
+              let surface = findSurface(in: content),
+              let handle = surface.surface else { return nil }
+        var metrics = ghostty_surface_grid_metrics_s()
+        guard ghostty_surface_grid_metrics(handle, &metrics), metrics.cursor_in_viewport else { return nil }
+        // The surface may be shifted inside its clipping host, so measure in
+        // the host's coordinates — that is what SwiftUI overlays sit on.
+        let host = surface.superview as? FlippedView
+        let offsetY = (host?.frame.origin.y ?? 0) + surface.frame.origin.y
+        let x = metrics.padding_left + Double(metrics.cursor_column) * metrics.cell_width
+        let y = offsetY + metrics.padding_top + Double(metrics.cursor_row) * metrics.cell_height
+        return CursorAnchor(
+            origin: CGPoint(x: x, y: y),
+            cellWidth: metrics.cell_width,
+            cellHeight: metrics.cell_height,
+            columnsRemaining: max(0, Int(metrics.columns) - Int(metrics.cursor_column))
+        )
+    }
+
     /// Makes the key window's terminal surface first responder again.
     static func focusTerminal() {
         DispatchQueue.main.async {

@@ -388,6 +388,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Herd's command line",
+                detail: "At a shell prompt, Herd edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell."
+            ) {
+                Toggle("", isOn: $settings.values.promptEditor).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Run commands from the menu",
                 detail: "Picking a command submits it to the agent. Off types it into the prompt instead. Commands that take arguments are always typed."
             ) {

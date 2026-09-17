@@ -48,6 +48,7 @@ struct HerdSettings: Codable, Equatable {
     var offerRecovery = true
     var slashMenu = true
     var slashRunsCommands = true
+    var promptEditor = true
     var autoNameTabs = true
     var showTips = true
 
@@ -144,6 +145,7 @@ struct HerdSettings: Codable, Equatable {
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         slashMenu = value("slashMenu", defaults.slashMenu)
         slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
+        promptEditor = value("promptEditor", defaults.promptEditor)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         showTips = value("showTips", defaults.showTips)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)

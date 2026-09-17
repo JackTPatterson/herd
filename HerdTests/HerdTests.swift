@@ -1077,3 +1077,114 @@ final class CommandHistoryTests: XCTestCase {
         XCTAssertEqual(history.ranked(matching: "cargo"), ["cargo test"])
     }
 }
+
+final class ShellPromptTests: XCTestCase {
+    func testOnlyTheBareShellCountsAsAPrompt() {
+        let shell = ShellPrompt.ProcessInfo(shellPid: 100, foreground: [("-zsh", 100)])
+        XCTAssertTrue(ShellPrompt.isAtPrompt(shell))
+        XCTAssertEqual(ShellPrompt.shellName(shell), "zsh")
+
+        // A program in the foreground means hands off the keyboard.
+        let agent = ShellPrompt.ProcessInfo(shellPid: 100, foreground: [("claude", 240)])
+        XCTAssertFalse(ShellPrompt.isAtPrompt(agent))
+        let editor = ShellPrompt.ProcessInfo(shellPid: 100, foreground: [("zsh", 100), ("nvim", 250)])
+        XCTAssertFalse(ShellPrompt.isAtPrompt(editor))
+        // A shell that isn't the pane's own shell is a nested one, not a prompt.
+        XCTAssertFalse(ShellPrompt.isAtPrompt(.init(shellPid: 100, foreground: [("zsh", 300)])))
+        XCTAssertFalse(ShellPrompt.isAtPrompt(.init(shellPid: 100, foreground: [])))
+        XCTAssertFalse(ShellPrompt.isAtPrompt(nil))
+    }
+
+    func testProcessInfoParsesWhatHerdrReports() throws {
+        let payload: [String: Any] = [
+            "process_info": [
+                "pane_id": "w1:p1",
+                "shell_pid": 35357,
+                "foreground_processes": [["pid": 35357, "name": "zsh", "cwd": "/repo"]],
+            ],
+        ]
+        let info = try XCTUnwrap(ShellPrompt.parse(payload))
+        XCTAssertEqual(info.shellPid, 35357)
+        XCTAssertEqual(info.foreground.first?.name, "zsh")
+        XCTAssertTrue(ShellPrompt.isAtPrompt(info))
+        XCTAssertNil(ShellPrompt.parse(["type": "ok"]))
+    }
+}
+
+final class PromptLineTests: XCTestCase {
+    func testTypingAndDeletingBehaveLikeALineEditor() {
+        var line = PromptLine()
+        line.insert("git status")
+        XCTAssertEqual(line.text, "git status")
+        XCTAssertTrue(line.caretAtEnd)
+
+        line.deleteWordBackward()
+        XCTAssertEqual(line.text, "git ")
+        line.insert("commit -m x")
+        line.moveToStart()
+        line.deleteForward()
+        XCTAssertEqual(line.text, "it commit -m x")
+        line.moveToEnd()
+        line.deleteToStart()
+        XCTAssertTrue(line.isEmpty)
+        // Deleting an empty line is harmless.
+        line.deleteBackward()
+        line.deleteForward()
+        XCTAssertTrue(line.isEmpty)
+    }
+
+    func testCaretMovesByCharacterAndWord() {
+        var line = PromptLine(text: "npm run build", caret: 13)
+        line.moveWordLeft()
+        XCTAssertEqual(line.caret, 8)
+        line.moveWordLeft()
+        XCTAssertEqual(line.caret, 4)
+        line.moveLeft()
+        XCTAssertEqual(line.caret, 3)
+        line.moveWordRight()
+        XCTAssertEqual(line.caret, 7)
+        line.moveToEnd()
+        line.deleteToEnd()
+        XCTAssertEqual(line.text, "npm run build")
+        line.moveToStart()
+        line.deleteToEnd()
+        XCTAssertTrue(line.isEmpty)
+    }
+
+    func testAcceptingASuggestionWholeOrOneWordAtATime() {
+        var line = PromptLine(text: "git ")
+        XCTAssertTrue(line.acceptWord(of: "git commit --amend"))
+        XCTAssertEqual(line.text, "git commit ")
+        XCTAssertTrue(line.accept(suggestion: "git commit --amend"))
+        XCTAssertEqual(line.text, "git commit --amend")
+        // Nothing to accept when it no longer matches or the caret moved.
+        XCTAssertFalse(line.accept(suggestion: "git commit --amend"))
+        XCTAssertFalse(line.accept(suggestion: "cargo test"))
+        var mid = PromptLine(text: "git", caret: 1)
+        XCTAssertFalse(mid.accept(suggestion: "git status"))
+    }
+
+    func testHistoryStepsForwardAndComesBackToTheDraft() {
+        var line = PromptLine()
+        line.insert("np")
+        let matches = ["npm run build", "npm test", "npm ci"]
+        line.stepHistory(1, matches: matches)
+        XCTAssertEqual(line.text, "npm run build")
+        XCTAssertTrue(line.isBrowsingHistory)
+        line.stepHistory(1, matches: matches)
+        XCTAssertEqual(line.text, "npm test")
+        line.stepHistory(-1, matches: matches)
+        XCTAssertEqual(line.text, "npm run build")
+        line.stepHistory(-1, matches: matches)
+        // Back past the newest: what was being typed returns.
+        XCTAssertEqual(line.text, "np")
+        XCTAssertFalse(line.isBrowsingHistory)
+        // Down before any history does nothing.
+        line.stepHistory(-1, matches: matches)
+        XCTAssertEqual(line.text, "np")
+        // Typing leaves history browsing.
+        line.stepHistory(1, matches: matches)
+        line.insert("!")
+        XCTAssertFalse(line.isBrowsingHistory)
+    }
+}

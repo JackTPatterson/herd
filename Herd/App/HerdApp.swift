@@ -7,6 +7,7 @@ struct HerdApp: App {
     @StateObject private var ui = UIState()
     @StateObject private var marketplace: MarketplaceStore
     @StateObject private var slash: SlashController
+    @StateObject private var prompt: PromptEditor
     private let session: HerdrSession?
 
     init() {
@@ -25,13 +26,16 @@ struct HerdApp: App {
         let slash = SlashController(store: store)
         _slash = StateObject(wrappedValue: slash)
         HerdKeyHook.controller = slash
+        let prompt = PromptEditor(store: store)
+        _prompt = StateObject(wrappedValue: prompt)
+        HerdKeyHook.prompt = prompt
         settings.reloadHerdr = { [weak store] in store?.reloadHerdrConfig(quiet: true) }
         HerdTerminalRuntime.configure(overrides: settings.values.ghosttyConfig + "\n" + Theme.herdShortcutUnbinds)
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView(store: store, ui: ui, session: session, slash: slash)
+            RootView(store: store, ui: ui, session: session, slash: slash, prompt: prompt)
                 .frame(minWidth: 720, minHeight: 420)
                 .onAppear {
                     store.start()
@@ -207,8 +211,11 @@ enum MarketplaceWindow {
 @MainActor
 enum HerdKeyHook {
     static weak var controller: SlashController?
+    static weak var prompt: PromptEditor?
 
     static func handleKeyDown(_ event: NSEvent) -> Bool {
-        controller?.handleKeyDown(event) ?? false
+        // Agent panes get the slash menu; shell prompts get Herd's own line.
+        if controller?.handleKeyDown(event) == true { return true }
+        return prompt?.handleKeyDown(event) ?? false
     }
 }

@@ -158,6 +158,25 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Herd's command line
+
+At a bare shell prompt, Herd takes the keyboard and edits the line itself,
+the way Warp does: the command is highlighted as you type, a greyed-out
+suggestion from your history follows the caret, and the finished line goes to
+the shell on Return. Everything a shell's own editor offers is here — word
+moves and deletes (⌥←/→, ⌥⌫), ⌃A/⌃E, ⌃U/⌃K/⌃W, ↑/↓ through matching history,
+→ or ⌃F to take the suggestion, ⌥→ for one word of it.
+
+It only ever runs while the pane's foreground process is its own shell, which
+Herd reads from the engine rather than guessing, so an agent, an editor or a
+pager always gets your keys. Anything Herd doesn't handle — Tab, a control
+key it has no meaning for, Escape, losing the window — hands what you typed
+straight to the shell and steps aside, so nothing can be trapped in it.
+Settings → Agents turns it off.
+
+History comes from the shells' own files (zsh, bash and fish formats), ranked
+by how often and how recently you have run each command.
+
 ## Terminal text position
 
 Settings → Terminal chooses where a pane's output sits while it doesn't fill

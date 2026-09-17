@@ -6,6 +6,7 @@ struct RootView: View {
     @ObservedObject var ui: UIState
     let session: HerdrSession?
     @ObservedObject var slash: SlashController
+    @ObservedObject var prompt: PromptEditor
     @StateObject private var palette = PaletteModel()
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
@@ -112,10 +113,20 @@ struct RootView: View {
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlayVisible = id != nil }
         .onChange(of: store.snapshot.focusedPaneId) { _, _ in slash.resetTyping() }
         .overlay(alignment: .topLeading) {
+            // Herd's own command line, drawn over the shell's prompt.
+            if prompt.isActive, let anchor = prompt.anchor {
+                PromptEditorView(editor: prompt)
+                    .frame(width: max(120, CGFloat(anchor.columnsRemaining) * anchor.cellWidth))
+                    .offset(x: sidebarInset + anchor.origin.x,
+                            y: Theme.titleBarHeight + Theme.tabBarHeight + anchor.origin.y)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topLeading) {
             // The engine's chrome row travels down with bottom-anchored
             // content. Only a root-level overlay paints above the hosted
             // terminal view, so the cover lives here rather than on it.
-            let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil }()
+            let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil || prompt.isActive }()
             if let cover = terminalAnchor.chromeCover {
                 Color(hex: TerminalTheme.named(settings.values.themeName).background)
                     .frame(width: cover.width, height: cover.height)
