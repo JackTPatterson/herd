@@ -106,23 +106,78 @@ final class HerdrStore: ObservableObject {
 
     // MARK: - Actions
 
-    private func perform(_ method: String, _ params: [String: Any]) {
+    /// Toast copy for a lasting action: shown while running and when done.
+    struct ToastText {
+        let progress: String
+        let success: String
+        let failure: String
+    }
+
+    private var toasts: ToastCenter { .shared }
+
+    private func perform(
+        _ method: String,
+        _ params: [String: Any],
+        toast text: ToastText? = nil,
+        failure failureTitle: String? = nil,
+        then: (@MainActor ([String: Any]) -> Void)? = nil
+    ) {
         let client = self.client
+        let handle = text.map { toasts.progress($0.progress) }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try client.call(method, params)
-            } catch {
-                DispatchQueue.main.async { self?.lastError = String(describing: error) }
+            let outcome = Result { try client.call(method, params) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch outcome {
+                case .success(let result):
+                    if let text { self.toasts.succeed(handle, text.success) }
+                    then?(result)
+                case .failure(let error):
+                    let message = Self.describe(error)
+                    if let text {
+                        self.toasts.fail(handle, text.failure, detail: message)
+                    } else if let failureTitle {
+                        self.toasts.fail(nil, failureTitle, detail: message)
+                    } else {
+                        self.lastError = message
+                    }
+                }
+                self.scheduleRefresh()
             }
-            DispatchQueue.main.async { self?.scheduleRefresh() }
         }
+    }
+
+    private static func describe(_ error: Error) -> String {
+        if case HerdrSocketError.server(_, let message) = error, !message.isEmpty { return message }
+        return String(describing: error)
+    }
+
+    private func tabLabel(_ id: String) -> String {
+        snapshot.tabs.first { $0.tabId == id }.map { tab in
+            tab.label.isEmpty || Int(tab.label) != nil ? "tab \(tab.label.isEmpty ? String(tab.number) : tab.label)" : tab.label
+        } ?? "tab"
+    }
+
+    private func workspaceLabel(_ id: String) -> String {
+        snapshot.workspaces.first { $0.workspaceId == id }?.label ?? "workspace"
     }
 
     func focusWorkspace(_ id: String) { perform("workspace.focus", ["workspace_id": id]) }
     func focusTab(_ id: String) { perform("tab.focus", ["tab_id": id]) }
-    func closeTab(_ id: String) { perform("tab.close", ["tab_id": id]) }
-    func closeWorkspace(_ id: String) { perform("workspace.close", ["workspace_id": id]) }
-    func renameTab(_ id: String, to label: String) { perform("tab.rename", ["tab_id": id, "label": label]) }
+
+    func closeTab(_ id: String) {
+        let label = tabLabel(id)
+        perform("tab.close", ["tab_id": id], failure: "Couldn't close \(label)")
+    }
+
+    func closeWorkspace(_ id: String) {
+        let label = workspaceLabel(id)
+        perform("workspace.close", ["workspace_id": id], failure: "Couldn't close workspace \(label)")
+    }
+
+    func renameTab(_ id: String, to label: String) {
+        perform("tab.rename", ["tab_id": id, "label": label], failure: "Couldn't rename tab")
+    }
 
     func newTab() {
         var params: [String: Any] = ["focus": true]
@@ -130,13 +185,13 @@ final class HerdrStore: ObservableObject {
             params["workspace_id"] = workspace.workspaceId
             if let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) { params["cwd"] = cwd }
         }
-        perform("tab.create", params)
+        perform("tab.create", params, failure: "Couldn't open a tab")
     }
 
     func newWorkspace(cwd: String? = nil) {
         var params: [String: Any] = ["focus": true]
         if let cwd { params["cwd"] = cwd }
-        perform("workspace.create", params)
+        perform("workspace.create", params, failure: "Couldn't create a workspace")
     }
 
     /// Tab 1–9 of the focused workspace (9 = last).
@@ -169,7 +224,7 @@ final class HerdrStore: ObservableObject {
     }
 
     func renameWorkspace(_ id: String, to label: String) {
-        perform("workspace.rename", ["workspace_id": id, "label": label])
+        perform("workspace.rename", ["workspace_id": id, "label": label], failure: "Couldn't rename workspace")
     }
 
     var focusedPaneId: String? {
@@ -186,7 +241,7 @@ final class HerdrStore: ObservableObject {
            let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) {
             params["cwd"] = cwd
         }
-        perform("pane.split", params)
+        perform("pane.split", params, failure: "Couldn't split pane")
     }
 
     func toggleZoom() {
@@ -197,7 +252,7 @@ final class HerdrStore: ObservableObject {
 
     func closeFocusedPane() {
         guard let pane = focusedPaneId else { return }
-        perform("pane.close", ["pane_id": pane])
+        perform("pane.close", ["pane_id": pane], failure: "Couldn't close pane")
     }
 
     func focusPane(_ direction: PaneDirection) {
@@ -229,23 +284,31 @@ final class HerdrStore: ObservableObject {
             focusWorkspace(existing.workspaceId)
             return
         }
-        perform("workspace.create", ["cwd": path, "label": label, "focus": true])
+        perform("workspace.create", ["cwd": path, "label": label, "focus": true], failure: "Couldn't open \(label)")
     }
 
     func createWorktree(branch: String) {
         var params: [String: Any] = ["branch": branch, "focus": true]
         if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
-        perform("worktree.create", params)
+        perform("worktree.create", params, toast: ToastText(
+            progress: "Creating worktree \(branch)…", success: "Created worktree \(branch)",
+            failure: "Couldn't create worktree \(branch)"
+        ))
     }
 
-    func reloadHerdrConfig() { perform("server.reload_config", [:]) }
+    func reloadHerdrConfig() {
+        perform("server.reload_config", [:], toast: ToastText(
+            progress: "Reloading herdr config…", success: "Reloaded herdr config", failure: "Couldn't reload herdr config"
+        ))
+    }
 
     func moveFocusedTab(by offset: Int) {
         let tabs = focusedWorkspaceTabs
         guard let index = tabs.firstIndex(where: { $0.tabId == snapshot.focusedTabId }) else { return }
         let target = max(0, min(tabs.count - 1, index + offset))
         guard target != index else { return }
-        perform("tab.move", ["tab_id": tabs[index].tabId, "insert_index": target])
+        let label = tabLabel(tabs[index].tabId)
+        perform("tab.move", ["tab_id": tabs[index].tabId, "insert_index": target], failure: "Couldn't move \(label)")
     }
 
     // MARK: - Plugins
@@ -293,63 +356,128 @@ final class HerdrStore: ObservableObject {
         return context
     }
 
-    func invokePluginAction(pluginId: String, actionId: String) {
-        perform("plugin.action.invoke", [
-            "plugin_id": pluginId, "action_id": actionId, "context": pluginInvocationContext,
-        ])
+    /// Invokes a plugin action and follows its run in `plugin.log.list` so the
+    /// toast reports when the command actually finishes, not just when herdr
+    /// accepted it.
+    func invokePluginAction(pluginId: String, actionId: String, title: String) {
+        let client = self.client
+        let handle = toasts.progress("Running \(title)…")
+        let started = UInt64(Date().timeIntervalSince1970 * 1000) - 1000
+        let params: [String: Any] = ["plugin_id": pluginId, "action_id": actionId, "context": pluginInvocationContext]
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try client.call("plugin.action.invoke", params)
+            } catch {
+                DispatchQueue.main.async { self?.toasts.fail(handle, "Couldn't run \(title)", detail: Self.describe(error)) }
+                return
+            }
+            var log: HerdrPluginLog?
+            for _ in 0..<240 {
+                let logs = (try? client.call("plugin.log.list", ["plugin_id": pluginId, "limit": 10]))
+                    .flatMap { try? JSONSerialization.data(withJSONObject: $0["logs"] ?? []) }
+                    .flatMap { try? JSONDecoder().decode([HerdrPluginLog].self, from: $0) } ?? []
+                log = logs.filter { $0.actionId == actionId && $0.startedUnixMs >= started }
+                    .max { $0.startedUnixMs < $1.startedUnixMs }
+                if let log, log.status != "running" { break }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch log?.status {
+                case "succeeded":
+                    self.toasts.succeed(handle, "\(title) finished",
+                                        detail: log?.stdout.map { PluginCLI.lastLines($0, count: 2) })
+                case "failed":
+                    let detail = [log?.error, log?.stderr, log?.exitCode.map { "exit \($0)" }]
+                        .compactMap { $0 }.first { !$0.isEmpty }
+                    self.toasts.fail(handle, "\(title) failed", detail: detail.map { PluginCLI.lastLines($0) })
+                default:
+                    self.toasts.succeed(handle, "Started \(title)", detail: "Still running — see the plugin's logs")
+                }
+                self.scheduleRefresh()
+            }
+        }
     }
 
-    func openPluginPane(pluginId: String, paneId: String, placement: String?) {
+    func openPluginPane(pluginId: String, paneId: String, placement: String?, title: String) {
         var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": paneId, "focus": true]
         // Overlay and popup panes always attach to the active pane; herdr
         // rejects an explicit target for them.
         if let pane = focusedPaneId, placement == "split" || placement == "tab" || placement == "zoomed" {
             params["target_pane_id"] = pane
         }
-        perform("plugin.pane.open", params)
+        perform("plugin.pane.open", params, failure: "Couldn't open \(title)")
     }
 
-    private func performThenRefreshPlugins(_ method: String, _ params: [String: Any]) {
-        let client = self.client
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                try client.call(method, params)
-            } catch {
-                DispatchQueue.main.async { self?.lastError = String(describing: error) }
-            }
-            DispatchQueue.main.async { self?.refreshPlugins() }
-        }
+    private func pluginName(_ pluginId: String) -> String {
+        plugins.first { $0.pluginId == pluginId }?.name ?? pluginId
     }
 
     func setPluginEnabled(_ pluginId: String, _ enabled: Bool) {
-        performThenRefreshPlugins(enabled ? "plugin.enable" : "plugin.disable", ["plugin_id": pluginId])
+        let name = pluginName(pluginId)
+        perform(enabled ? "plugin.enable" : "plugin.disable", ["plugin_id": pluginId], toast: ToastText(
+            progress: "\(enabled ? "Enabling" : "Disabling") \(name)…",
+            success: "\(enabled ? "Enabled" : "Disabled") \(name)",
+            failure: "Couldn't \(enabled ? "enable" : "disable") \(name)"
+        )) { [weak self] _ in self?.refreshPlugins() }
     }
 
     func unlinkPlugin(_ pluginId: String) {
-        performThenRefreshPlugins("plugin.unlink", ["plugin_id": pluginId])
+        let name = pluginName(pluginId)
+        perform("plugin.unlink", ["plugin_id": pluginId], toast: ToastText(
+            progress: "Unlinking \(name)…", success: "Unlinked \(name)", failure: "Couldn't unlink \(name)"
+        )) { [weak self] _ in self?.refreshPlugins() }
     }
 
     func linkPlugin(path: String) {
-        performThenRefreshPlugins("plugin.link", ["path": path])
+        let folder = URL(fileURLWithPath: path).lastPathComponent
+        perform("plugin.link", ["path": path], toast: ToastText(
+            progress: "Linking \(folder)…", success: "Linked plugin \(folder)", failure: "Couldn't link \(folder)"
+        )) { [weak self] _ in self?.refreshPlugins() }
     }
 
-    /// Runs a herdr plugin CLI command interactively in a new tab, so the user
-    /// reviews herdr's install preview and confirms it themselves.
-    func runPluginCommandInTab(label: String, arguments: [String], herdrPath: String) {
-        let command = ([herdrPath, "--session", HerdrSession.name, "plugin"] + arguments)
-            .map(shellQuote).joined(separator: " ")
-        var pane: [String: Any] = [
-            "type": "pane",
-            "label": label,
-            "command": ["/bin/zsh", "-lc", "\(command); echo; read -k1 '?Press any key to close this tab'"],
-        ]
-        if let workspace = focusedWorkspace,
-           let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) {
-            pane["cwd"] = cwd
+    /// Downloads the plugin, shows herdr's install preview for confirmation,
+    /// then installs it — with a toast for each stage.
+    func installPlugin(repo: String, herdrPath: String, confirm: @escaping (String) -> Bool) {
+        let handle = toasts.progress("Downloading \(repo)…", detail: "Fetching the install preview")
+        PluginCLI.preview(repo: repo, herdrPath: herdrPath) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.toasts.fail(handle, "Couldn't download \(repo)", detail: String(describing: error))
+            case .success(let preview):
+                let name = PluginCLI.previewField("name", in: preview) ?? repo
+                let version = PluginCLI.previewField("version", in: preview)
+                self.toasts.dismiss(handleId: handle)
+                guard confirm(preview) else {
+                    self.toasts.info("Install cancelled", detail: name)
+                    return
+                }
+                let installing = self.toasts.progress("Installing \(name)…", detail: "Running the plugin's build steps")
+                PluginCLI.install(repo: repo, herdrPath: herdrPath) { outcome in
+                    if outcome.exitCode == 0 {
+                        self.toasts.succeed(installing, "Installed \(name)\(version.map { " \($0)" } ?? "")")
+                    } else {
+                        self.toasts.fail(installing, "Couldn't install \(name)", detail: PluginCLI.lastLines(outcome.output))
+                    }
+                    self.refreshPlugins()
+                }
+            }
         }
-        var params: [String: Any] = ["tab_label": label, "focus": true, "root": pane]
-        if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
-        perform("layout.apply", params)
+    }
+
+    func uninstallPlugin(_ pluginId: String, herdrPath: String) {
+        let name = pluginName(pluginId)
+        let handle = toasts.progress("Removing \(name)…")
+        PluginCLI.uninstall(pluginId: pluginId, herdrPath: herdrPath) { [weak self] outcome in
+            guard let self else { return }
+            if outcome.exitCode == 0 {
+                self.toasts.succeed(handle, "Removed \(name)")
+            } else {
+                self.toasts.fail(handle, "Couldn't remove \(name)", detail: PluginCLI.lastLines(outcome.output))
+            }
+            self.refreshPlugins()
+        }
     }
 
     func pluginLogs(pluginId: String?, completion: @escaping ([HerdrPluginLog]) -> Void) {

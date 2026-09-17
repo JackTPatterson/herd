@@ -195,7 +195,7 @@ enum PaletteCatalog {
                         subtitle: [owner, action.description].compactMap { $0 }.joined(separator: " · "),
                         keywords: [plugin.pluginId, action.id],
                         icon: .symbol("puzzlepiece.extension"),
-                        effect: .run { store.invokePluginAction(pluginId: plugin.pluginId, actionId: action.id) }
+                        effect: .run { store.invokePluginAction(pluginId: plugin.pluginId, actionId: action.id, title: action.title) }
                     ))
                 }
                 for pane in plugin.panes {
@@ -205,7 +205,7 @@ enum PaletteCatalog {
                             .compactMap { $0 }.joined(separator: " · "),
                         keywords: [plugin.pluginId, pane.id, "pane"],
                         icon: .symbol("rectangle.on.rectangle"),
-                        effect: .run { store.openPluginPane(pluginId: plugin.pluginId, paneId: pane.id, placement: pane.placement) }
+                        effect: .run { store.openPluginPane(pluginId: plugin.pluginId, paneId: pane.id, placement: pane.placement, title: pane.title) }
                     ))
                 }
             }
@@ -230,7 +230,11 @@ enum PaletteCatalog {
                     subtitle: plugin.pluginId, keywords: ["remove", "delete"],
                     icon: .symbol("trash"),
                     effect: .run {
-                        store.runPluginCommandInTab(label: "Uninstall \(plugin.name)", arguments: ["uninstall", plugin.pluginId], herdrPath: herdr)
+                        guard PluginDialogs.confirmUninstall(name: plugin.name) else {
+                            ToastCenter.shared.info("Uninstall cancelled", detail: plugin.name)
+                            return
+                        }
+                        store.uninstallPlugin(plugin.pluginId, herdrPath: herdr)
                     }
                 ))
             } else {
@@ -246,11 +250,11 @@ enum PaletteCatalog {
         if let herdr = HerdrSession.locateHerdr() {
             items.append(PaletteItem(
                 id: "plugin.install", kind: .plugin, title: "Install Plugin from GitHub…",
-                subtitle: "owner/repo[/subdir] · review herdr's preview before confirming",
+                subtitle: "owner/repo[/subdir] · review the install preview before confirming",
                 keywords: ["add", "marketplace"],
                 icon: .symbol("square.and.arrow.down"),
                 effect: .prompt(title: "Install Plugin", placeholder: "owner/repo", initial: "") { repo in
-                    store.runPluginCommandInTab(label: "Install \(repo)", arguments: ["install", repo], herdrPath: herdr)
+                    store.installPlugin(repo: repo, herdrPath: herdr, confirm: PluginDialogs.confirmInstall(preview:))
                 }
             ))
         }
@@ -360,5 +364,40 @@ enum ProjectDirectories {
             }
         }
         return entries.sorted { $0.modified > $1.modified }.map(\.path)
+    }
+}
+
+/// Native confirmation dialogs for plugin changes.
+@MainActor
+enum PluginDialogs {
+    /// Shows herdr's install preview; returns true when the user confirms.
+    static func confirmInstall(preview: String) -> Bool {
+        let name = PluginCLI.previewField("name", in: preview) ?? "this plugin"
+        let alert = NSAlert()
+        alert.messageText = "Install \(name)?"
+        alert.informativeText = "Plugins run as your user and are not sandboxed. Review the commands herdr will run:"
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 480, height: 260))
+        text.string = preview
+        text.isEditable = false
+        text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.textContainerInset = NSSize(width: 6, height: 6)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 260))
+        scroll.documentView = text
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    static func confirmUninstall(name: String) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Uninstall \(name)?"
+        alert.informativeText = "herdr removes the plugin's files. Its config directory is kept."
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }

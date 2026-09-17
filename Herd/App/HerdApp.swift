@@ -102,33 +102,32 @@ struct HerdCommands: Commands {
 
 /// Menu actions for the Claude Code hook that opens subagent tabs.
 enum ClaudeHookMenu {
+    @MainActor
     static func install() {
+        let toasts = ToastCenter.shared
         guard let cli = Bundle.main.url(forAuxiliaryExecutable: "herd-cli")?.path else {
-            return alert("herd-cli is missing from the app bundle.")
+            toasts.fail(nil, "Couldn't install the subagent tabs hook", detail: "herd-cli is missing from the app bundle")
+            return
         }
+        let handle = toasts.progress("Installing the Claude subagent tabs hook…")
         do {
             let changed = try ClaudeHookInstaller.install(cliPath: cli)
-            alert(changed
-                ? "Installed. New Claude Code sessions inside Herd open a tab for each subagent."
-                : "The hook is already installed.")
+            toasts.succeed(handle, changed ? "Installed the subagent tabs hook" : "Subagent tabs hook already installed",
+                           detail: "New Claude Code sessions in Herd open a tab per subagent")
         } catch {
-            alert("Could not update ~/.claude/settings.json: \(error)")
+            toasts.fail(handle, "Couldn't update ~/.claude/settings.json", detail: String(describing: error))
         }
     }
 
+    @MainActor
     static func uninstall() {
+        let toasts = ToastCenter.shared
+        let handle = toasts.progress("Removing the Claude subagent tabs hook…")
         do {
             let changed = try ClaudeHookInstaller.uninstall()
-            alert(changed ? "Removed the subagent tabs hook." : "The hook was not installed.")
+            toasts.succeed(handle, changed ? "Removed the subagent tabs hook" : "Subagent tabs hook was not installed")
         } catch {
-            alert("Could not update ~/.claude/settings.json: \(error)")
+            toasts.fail(handle, "Couldn't update ~/.claude/settings.json", detail: String(describing: error))
         }
-    }
-
-    private static func alert(_ message: String) {
-        let alert = NSAlert()
-        alert.messageText = "Claude Subagent Tabs"
-        alert.informativeText = message
-        alert.runModal()
     }
 }

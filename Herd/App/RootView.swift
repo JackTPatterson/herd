@@ -22,14 +22,12 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if let error = store.lastError {
-                ErrorToast(message: error) { store.lastError = nil }
-                    .padding(16)
-                    .task(id: error) {
-                        try? await Task.sleep(for: .seconds(6))
-                        if store.lastError == error { store.lastError = nil }
-                    }
-            }
+            ToastStack(center: ToastCenter.shared)
+        }
+        .onChange(of: store.lastError) { _, error in
+            guard let error else { return }
+            ToastCenter.shared.fail(nil, "herdr request failed", detail: error)
+            store.lastError = nil
         }
         .overlay {
             if ui.paletteVisible {
@@ -88,33 +86,6 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.terminalBackground)
         }
-    }
-}
-
-private struct ErrorToast: View {
-    let message: String
-    let dismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color(hex: AgentStateColor.blocked))
-            Text(message)
-                .font(Theme.uiFont)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(3)
-                .frame(maxWidth: 360, alignment: .leading)
-            Button(action: dismiss) {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.textSecondary)
-        }
-        .padding(10)
-        .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
     }
 }
 

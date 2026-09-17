@@ -59,9 +59,18 @@ Herd runs herdr plugins (event hooks, startup commands, panes, link handlers)
 unchanged, since herdr's server owns them. The palette's `!` filter adds what
 herdr's hidden UI would otherwise provide: invoke plugin actions (with the
 focused workspace/tab/pane as context), open plugin panes, enable/disable,
-browse run logs, and install from GitHub in a tab where you review herdr's
-preview before confirming. Plugins that only render into herdr's text sidebar
+browse run logs, and install from GitHub after reviewing herdr's install preview in a
+confirmation dialog. Plugins that only render into herdr's text sidebar
 (e.g. herdr-radar) have no effect in Herd; Herd's native sidebar covers that.
+
+## Toasts
+
+Actions whose result isn't immediately visible or that take time show a
+progress toast (after 200 ms) and a confirmation or failure toast: plugin
+install (download → preview dialog → install), uninstall (with confirmation),
+enable/disable, link/unlink, plugin action runs (tracked until the command
+finishes), new worktree, herdr config reload, and the Claude hook. Instant,
+visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
 
 ## Shortcuts
 

@@ -14,9 +14,11 @@ enum DebugSnapshot {
     static var overlayVisible = false
     static func start() {
         guard let dir = ProcessInfo.processInfo.environment["HERD_SNAPSHOT_DIR"] else { return }
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated { dump(to: dir) }
         }
+        // .common keeps snapshots flowing while modal alerts run.
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private static func findSurface(in view: NSView) -> Ghostty.SurfaceView? {
@@ -36,7 +38,9 @@ enum DebugSnapshot {
         let composed = NSImage(size: content.bounds.size)
         composed.lockFocus()
         chrome.draw(in: content.bounds)
+        let toasts = ToastCenter.shared.visibleToasts
         var info = "window=\(window.frame) key=\(window.isKeyWindow)\n"
+        info += "toasts=\(toasts.map { "[\($0.style)] \($0.title)\($0.detail.map { " — \($0)" } ?? "")" })\n"
         if let surfaceView = findSurface(in: content) {
             let frame = surfaceView.convert(surfaceView.bounds, to: content)
             if let clip = surfaceView.superview as? TopRowClippingView {
@@ -47,7 +51,7 @@ enum DebugSnapshot {
             }
             info += "terminal=\(frame) firstResponder=\(window.firstResponder === surfaceView)\n"
             let contents = surfaceView.layer?.contents ?? surfaceView.layer?.sublayers?.first?.contents
-            if !overlayVisible, let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
+            if !overlayVisible, toasts.isEmpty, let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
                 let ioSurface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
                 let image = CIImage(ioSurface: ioSurface)
                 if let cg = CIContext().createCGImage(image, from: image.extent) {
