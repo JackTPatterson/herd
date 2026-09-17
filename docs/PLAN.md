@@ -54,3 +54,22 @@ by herdr's socket API.
 
 Out of v1: command palette/search, settings UI, multiple windows, SSH machines,
 packaging/signing/notarization.
+
+## v1 status (2026-09-17)
+
+All eight items done and verified in the running app:
+
+| Item | Evidence |
+| --- | --- |
+| Build | xcodegen + xcodebuild succeed |
+| Terminal | herdr renders; typing, ⌘-shortcuts, click-to-focus, wheel scroll verified by synthetic events; resize, copy/paste, title, exit verified in the terminal spike |
+| Sidebar | projects grouped (OTHER / cmux / lab-vault), branches, Claude hue + state; card click switches workspace |
+| Tab bar | tab click switches; ⌘T creates, ⌘W closes; subagent tab shows name, state, Claude mark |
+| Warp styling | colors/metrics from Warp source |
+| Shortcuts | ⌘1–9, ⌘T/W/N/B, ⌃⌘↑/↓ verified |
+| Subagent tabs | real `claude -p` run spawned a subagent → background tab "Answer arithmetic" rendered its prompt and answer, state done |
+| Tests | 17 unit tests pass |
+
+Not verified: IME composition, mixed-DPI displays, and ⌘⇧[ / ⌘⇧].
+herdr's own tab row is clipped rather than disabled (herdr has no option to
+hide it with multiple tabs).
