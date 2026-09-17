@@ -778,6 +778,10 @@ final class TabAutoNameTests: XCTestCase {
         XCTAssertEqual(TabAutoName.label(from: "  Rewrite   the parser  "), "Rewrite the parser")
         XCTAssertEqual(TabAutoName.label(from: "jack@mac: ~/Developer/herd"), nil)
         XCTAssertNil(TabAutoName.label(from: "zsh"))
+        // An agent naming itself is not a description of the work.
+        XCTAssertNil(TabAutoName.label(from: "Claude Code"))
+        XCTAssertNil(TabAutoName.label(from: "codex"))
+        XCTAssertNil(TabAutoName.label(from: "Claude Code — ~/Developer/herd"))
         XCTAssertNil(TabAutoName.label(from: "/Users/jack/app"))
         XCTAssertNil(TabAutoName.label(from: "app", cwd: "/work/app"))
         XCTAssertNil(TabAutoName.label(from: nil))

@@ -10,11 +10,16 @@ enum TabAutoName {
     /// A title has to hold still before a rename, so tabs don't flicker.
     static let settleAfter: TimeInterval = 2.5
 
-    /// Titles that say nothing about the work.
-    static let uninformative: Set<String> = [
-        "zsh", "bash", "fish", "sh", "login", "terminal", "claude", "codex",
-        "node", "python", "herdr", "tmux", "vim", "nvim", "ssh", "git",
-    ]
+    /// Titles that say nothing about the work: shells, bare tool names, and
+    /// an agent announcing itself rather than its task.
+    static var uninformative: Set<String> {
+        let shells: Set<String> = [
+            "zsh", "bash", "fish", "sh", "login", "terminal", "herdr",
+            "node", "python", "tmux", "vim", "nvim", "ssh", "git",
+        ]
+        let agents = Set(AgentBrand.displayNames.keys).union(AgentBrand.displayNames.values)
+        return shells.union(agents.map { $0.lowercased() })
+    }
 
     /// Cleans a pane's terminal title into a tab label, or nil when the
     /// title says nothing worth showing.
@@ -36,6 +41,9 @@ enum TabAutoName {
             text = String(text[text.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         }
         guard !text.isEmpty, !uninformative.contains(text.lowercased()) else { return nil }
+        // "Claude Code — /path" style titles are the agent plus its folder.
+        if let dash = text.range(of: " — ") ?? text.range(of: " - "),
+           uninformative.contains(text[..<dash.lowerBound].lowercased()) { return nil }
         // A bare path is the folder, not the task.
         if text.hasPrefix("/") || text.hasPrefix("~") { return nil }
         if let cwd, text == (cwd as NSString).lastPathComponent { return nil }
