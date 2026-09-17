@@ -186,6 +186,22 @@ lines from history. ↑/↓ move, Return or Tab accepts, Escape closes the menu
 without giving up the line. When Herd has nothing to offer, Tab goes to the
 shell so its own completion still works.
 
+**Where the completions come from.** Herd blends four sources, all local and
+all instant: command specs (subcommands, options and their descriptions),
+this folder's own scripts and targets (`package.json`, `Makefile`,
+`justfile`, compose services, your shell and git aliases), your history
+ranked by frecency, and what usually follows what — a sequence table built
+from history, so after `git add .` the line already reads your usual commit.
+Values that have to be live — branches, npm scripts, running containers —
+come from short generator commands whose output is cached per folder, so
+typing never waits on a process.
+
+Herd ships specs for a handful of commands; **Settings → Agents → Command
+specs** installs hundreds more from the MIT-licensed Fig corpus
+(`withfig/autocomplete`), converted into Herd's own format on your machine.
+The corpus is fetched on request rather than bundled, and its licence and a
+notice are written beside it. Everything else works without it.
+
 **Editing.** ⌃R searches history in the same menu. ⇧ with the arrows selects,
 ⌘C/⌘X/⌘V copy, cut and paste, ⌘A selects the line, and ⌘Z/⇧⌘Z undo and redo.
 
@@ -260,6 +276,8 @@ credited below; those license files live under `docs/`.
 - Ghostty macOS surface view — MIT (`Herd/Terminal/Ghostty/LICENSE-ghostty`)
 - herdr-radar vendor hues, display names, logo and state SVGs — MIT (`docs/LICENSE-herdr-radar`)
 - Warp Dark theme values and vertical-tab metrics (`warpdotdev/Warp`, MIT UI crates)
+- Command completion specs — MIT (`withfig/autocomplete`), fetched on request
+  into `~/Library/Application Support/Herd/completions` with its licence
 - Transcript renderer and project-root resolver from the author's cmux fork
 
 ## Debugging

@@ -340,6 +340,38 @@ private struct AgentSettings: View {
     @ObservedObject var integrations: HerdrIntegrations
     @State private var hookInstalled: Set<String> = []
 
+    @State private var installingSpecs = false
+    @State private var specStatus = ""
+
+    /// What the corpus adds, and what is installed now.
+    private var specDetail: String {
+        if !specStatus.isEmpty { return specStatus }
+        guard let index = SpecCorpus.index() else {
+            return "Subcommands, options and their descriptions for hundreds of commands, from the MIT-licensed Fig specs. Downloaded on request; Herd's own history and project sources work without it."
+        }
+        return "\(index.commands.count) commands from \(index.source), version \(index.version)."
+    }
+
+    private func installSpecs() {
+        installingSpecs = true
+        specStatus = "Starting…"
+        SpecIngest.run { step in
+            specStatus = step
+        } completion: { result in
+            installingSpecs = false
+            switch result {
+            case .success(let outcome):
+                specStatus = ""
+                ToastCenter.shared.info("Installed \(outcome.commands) command specs",
+                                        detail: "\(SpecIngest.sourceName), version \(outcome.version)")
+            case .failure(let error):
+                specStatus = ""
+                ToastCenter.shared.fail(nil, "Couldn't install the command specs",
+                                        detail: String(describing: error))
+            }
+        }
+    }
+
     private func refreshHooks() {
         hookInstalled = Set(SubagentHookInstaller.available().filter(SubagentHookInstaller.isInstalled).map(\.hostId))
     }
@@ -392,6 +424,14 @@ private struct AgentSettings: View {
                 detail: "At a shell prompt, Herd edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell."
             ) {
                 Toggle("", isOn: $settings.values.promptEditor).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Command specs",
+                detail: specDetail
+            ) {
+                Button(SpecCorpus.index() == nil ? "Install" : "Update") { installSpecs() }
+                    .disabled(installingSpecs)
             }
             SettingsDivider()
             SettingsRow(

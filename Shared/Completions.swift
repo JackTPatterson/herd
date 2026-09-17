@@ -44,6 +44,9 @@ struct CompletionContext: Equatable {
     var previousWord: String?
     /// True when the caret is on the first word.
     var isCommandPosition: Bool { command == nil }
+    /// Words between the command and the caret's own word, which say which
+    /// subcommand a spec is in.
+    var wordsBeforeToken: [String] = []
 
     /// Splits a line at the caret into the word being typed and its command.
     static func at(caret: Int, in line: String) -> CompletionContext {
@@ -67,11 +70,15 @@ struct CompletionContext: Equatable {
         var previousStart = previousEnd
         while previousStart > 0, !characters[previousStart - 1].isWhitespace { previousStart -= 1 }
         let previous = previousStart < previousEnd ? String(characters[previousStart..<previousEnd]) : nil
+        let before = String(characters[0..<start])
+            .split(separator: " ")
+            .map(String.init)
         return CompletionContext(
             token: token,
             range: start..<end,
             command: onFirstWord || first.isEmpty ? nil : first,
-            previousWord: previous
+            previousWord: previous,
+            wordsBeforeToken: Array(before.dropFirst())
         )
     }
 }
@@ -101,16 +108,30 @@ enum Completions {
         entries: [(name: String, isDirectory: Bool)] = [],
         history: [String] = [],
         branches: [String] = [],
+        spec: CompletionSpec? = nil,
+        generatorValues: [String] = [],
+        project: [ProjectCommands.Entry] = [],
+        predictions: [String] = [],
         limit: Int = 12
     ) -> [Completion] {
         var candidates: [Completion] = []
         let token = context.token
+
+        // A spec for this command knows more than any heuristic can.
+        if let command = context.command, let spec = spec {
+            candidates += fromSpec(spec, words: context.wordsBeforeToken, token: token,
+                                   entries: entries, generatorValues: generatorValues)
+            _ = command
+        }
 
         if context.isCommandPosition {
             candidates += ShellSyntax.builtins.map { Completion(value: $0, kind: .builtin) }
             candidates += commands.map { Completion(value: $0, kind: .command) }
             // A whole line from history is worth more than a bare name.
             candidates += history.prefix(200).map { Completion(value: $0, kind: .history) }
+            // What this folder can run, and what usually comes next.
+            candidates += project.map { Completion(value: $0.command, kind: .command, detail: $0.source) }
+            candidates += predictions.map { Completion(value: $0, kind: .history, detail: "next") }
         } else {
             if let command = context.command {
                 let second = secondWord(of: history, command: command)
@@ -134,6 +155,45 @@ enum Completions {
         }
 
         return rank(candidates, matching: token, limit: limit)
+    }
+
+    /// Candidates a spec offers at the caret: subcommands and options with
+    /// their descriptions, plus the argument's values. Generator values are
+    /// passed in, since running a command is the caller's business.
+    static func fromSpec(
+        _ spec: CompletionSpec,
+        words: [String],
+        token: String,
+        entries: [(name: String, isDirectory: Bool)] = [],
+        generatorValues: [String] = []
+    ) -> [Completion] {
+        let offered = spec.candidates(after: words)
+        var candidates: [Completion] = offered.names.map { entry in
+            Completion(
+                value: entry.value,
+                kind: entry.value.hasPrefix("-") ? .flag : .command,
+                detail: entry.summary
+            )
+        }
+        switch offered.argument {
+        case .file, .directory:
+            candidates += entries.map {
+                Completion(value: $0.isDirectory ? $0.name + "/" : $0.name, kind: $0.isDirectory ? .directory : .file)
+            }
+        case .generator:
+            candidates += generatorValues.map { Completion(value: $0, kind: .branch) }
+        case .values(let values):
+            candidates += values.map { Completion(value: $0, kind: .command) }
+        case nil:
+            break
+        }
+        return candidates
+    }
+
+    /// The generator an argument uses at the caret, if any.
+    static func generator(for spec: CompletionSpec, words: [String]) -> CompletionSpec.Generator? {
+        if case .generator(let generator) = spec.candidates(after: words).argument { return generator }
+        return nil
     }
 
     /// Prefix matches first, then fuzzy, shortest first, no duplicates.

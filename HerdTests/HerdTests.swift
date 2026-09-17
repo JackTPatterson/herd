@@ -1305,3 +1305,136 @@ final class PromptLineSelectionTests: XCTestCase {
         XCTAssertEqual(line.text, "git comm")
     }
 }
+
+final class SpecCompletionTests: XCTestCase {
+    func testASpecOffersSubcommandsThenItsOwnOptions() {
+        let spec = CompletionSpecs.git
+        let top = spec.candidates(after: [])
+        XCTAssertTrue(top.names.contains { $0.value == "commit" && $0.summary == "Record staged changes" })
+
+        // Inside `git commit`, its flags are what fit.
+        let commit = spec.candidates(after: ["commit"])
+        XCTAssertTrue(commit.names.contains { $0.value == "--amend" })
+        XCTAssertFalse(commit.names.contains { $0.value == "stash" })
+
+        // Nested subcommands resolve too.
+        let worktree = spec.candidates(after: ["worktree"])
+        XCTAssertTrue(worktree.names.contains { $0.value == "add" })
+    }
+
+    func testArgumentsSayWhereTheirValuesComeFrom() {
+        let branch = Completions.generator(for: CompletionSpecs.git, words: ["switch"])
+        XCTAssertEqual(branch?.id, "git.branches")
+        XCTAssertNil(Completions.generator(for: CompletionSpecs.git, words: ["status"]))
+
+        let fromSpec = Completions.fromSpec(
+            CompletionSpecs.git, words: ["switch"], token: "fe", generatorValues: ["feature/auth", "main"]
+        )
+        XCTAssertTrue(fromSpec.contains { $0.value == "feature/auth" && $0.kind == .branch })
+
+        // A file argument pulls this folder's entries instead.
+        let files = Completions.fromSpec(
+            CompletionSpecs.git, words: ["add"], token: "", entries: [("README.md", false), ("src", true)]
+        )
+        XCTAssertTrue(files.contains { $0.value == "src/" && $0.kind == .directory })
+    }
+
+    func testIngestedJSONBecomesASpec() throws {
+        let json = """
+        {"name":"kubectl","description":"Kubernetes","subcommands":[
+          {"name":"get","description":"Display resources","args":{"suggestions":["pods","services"]}},
+          {"name":"apply","options":[{"names":["-f","--filename"],"description":"File","args":{"template":"filepaths"}}]}
+        ]}
+        """
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let spec = try XCTUnwrap(SpecCorpus.parse(object))
+        XCTAssertEqual(spec.name, "kubectl")
+        XCTAssertEqual(spec.subcommands.count, 2)
+        let get = spec.candidates(after: ["get"])
+        XCTAssertEqual(get.argument, .values(["pods", "services"]))
+        let apply = spec.candidates(after: ["apply"])
+        XCTAssertTrue(apply.names.contains { $0.value == "--filename" })
+    }
+}
+
+final class ProjectCommandTests: XCTestCase {
+    func testScriptsTargetsRecipesAndServicesAreRead() {
+        let npm = ProjectCommands.parseNpmScripts(Data(#"{"scripts":{"build":"tsc","test":"vitest"}}"#.utf8))
+        XCTAssertEqual(npm.map(\.command), ["npm run build", "npm run test"])
+
+        let make = ProjectCommands.parseMakeTargets("""
+        CC = clang
+        .PHONY: all
+        all: build test
+        \trun-something
+        build:
+        %.o: %.c
+        """)
+        XCTAssertEqual(make.map(\.command), ["make all", "make build"])
+
+        let just = ProjectCommands.parseJustRecipes("""
+        set shell := ["bash"]
+        deploy env:
+        \techo deploying
+        test:
+        """)
+        XCTAssertEqual(just.map(\.command), ["just deploy", "just test"])
+
+        let compose = ProjectCommands.parseComposeServices("""
+        version: "3"
+        services:
+          web:
+            image: nginx
+          db:
+            image: postgres
+        volumes:
+          data:
+        """)
+        XCTAssertEqual(compose.map(\.command), ["docker compose up web", "docker compose up db"])
+    }
+
+    func testAliasesComeFromShellAndGitConfigs() {
+        XCTAssertEqual(
+            ProjectCommands.parseShellAliases("alias gs='git status'\n# alias nope='x'\nalias ll=\"ls -la\"\nexport A=1"),
+            ["gs", "ll"]
+        )
+        XCTAssertEqual(
+            ProjectCommands.parseGitAliases("[user]\n\tname = X\n[alias]\n\tco = checkout\n\tlg = log --oneline\n[core]\n\teditor = vim"),
+            ["co", "lg"]
+        )
+    }
+}
+
+final class CommandSequenceTests: XCTestCase {
+    func testWhatUsuallyFollowsIsLearnedFromHistory() {
+        let history = [
+            "git add .", "git commit -m wip", "git push",
+            "git add .", "git commit -m fix", "git push",
+            "cargo test",
+        ]
+        let sequences = CommandSequences(history: history)
+        // Both commits followed `git add .` once, so the more recent wins.
+        XCTAssertEqual(sequences.next(after: "git add .").first, "git commit -m fix")
+        XCTAssertEqual(sequences.next(after: "git commit -m anything").first, "git push")
+        XCTAssertTrue(sequences.next(after: "nothing-like-this").isEmpty)
+    }
+
+    func testPredictionsRespectWhatIsAlreadyTyped() {
+        let sequences = CommandSequences(history: [
+            "make build", "make test", "make build", "make test", "make build", "just deploy",
+        ])
+        // Twice as many `make test` follow-ups as the one-off `just deploy`.
+        XCTAssertEqual(sequences.prediction(after: "make build", matching: ""), "make test")
+        XCTAssertNil(sequences.prediction(after: "make build", matching: "cargo"))
+        XCTAssertEqual(sequences.prediction(after: "make build", matching: "make t"), "make test")
+    }
+
+    func testAFoldersOwnHabitsFillAnEmptyPrompt() {
+        var sequences = CommandSequences()
+        sequences.add(command: "npm run dev", in: "/work/site")
+        sequences.add(command: "npm run dev", in: "/work/site")
+        sequences.add(command: "npm test", in: "/work/site")
+        XCTAssertEqual(sequences.common(in: "/work/site").first, "npm run dev")
+        XCTAssertTrue(sequences.common(in: "/elsewhere").isEmpty)
+    }
+}

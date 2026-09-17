@@ -128,6 +128,19 @@ enum PaletteCatalog {
                 store.markIdle(workspace.workspaceId)
             })
         }
+        items.append(action("installSpecs", "Install Command Completion Specs", "square.and.arrow.down.on.square",
+                            keywords: ["completion", "autocomplete", "subcommands", "flags", "specs"]) {
+            SpecIngest.run { _ in } completion: { result in
+                switch result {
+                case .success(let outcome):
+                    ToastCenter.shared.info("Installed \(outcome.commands) command specs",
+                                            detail: SpecIngest.sourceName)
+                case .failure(let error):
+                    ToastCenter.shared.fail(nil, "Couldn't install the command specs",
+                                            detail: String(describing: error))
+                }
+            }
+        })
         items.append(action("recoverSessions", "Recover Agent Sessions…", "arrow.counterclockwise.circle",
                             keywords: ["resume", "restore", "claude", "codex", "crash", "restart", "history"]) {
             store.recovery.showHistory()

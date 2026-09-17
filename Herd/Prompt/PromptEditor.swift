@@ -32,6 +32,11 @@ final class PromptEditor: ObservableObject {
     private var pathCommands: [String] = []
     private var branches: [String] = []
     private var cwd: String?
+    /// What this folder can run, and what usually follows what.
+    private var projectCommands: [ProjectCommands.Entry] = []
+    private var sequences = CommandSequences()
+    /// The command submitted last, which drives the prediction.
+    private var lastCommand: String?
 
     init(store: HerdrStore) {
         self.store = store
@@ -246,10 +251,12 @@ final class PromptEditor: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let commands = needsPath ? Completions.commandsOnPath() : []
             let branches = Completions.branches(in: folder)
+            let project = ProjectCommands.all(in: folder)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if needsPath { self.pathCommands = commands }
                 self.branches = branches
+                self.projectCommands = project
             }
         }
     }
@@ -272,12 +279,27 @@ final class PromptEditor: ObservableObject {
     private func openCompletions() {
         let context = CompletionContext.at(caret: line.caret, in: line.text)
         let folder = cwd ?? NSHomeDirectory()
+        // The spec for this command, from Herd's own table or the corpus.
+        let spec = context.command.flatMap { SpecCorpus.merged(for: $0) }
+        var generatorValues: [String] = []
+        if let spec, let generator = Completions.generator(for: spec, words: context.wordsBeforeToken) {
+            generatorValues = GeneratorCache.shared.values(generator, cwd: folder)
+            // Stale values refresh behind the menu and reopen it when ready.
+            GeneratorCache.shared.refreshIfStale(generator, cwd: folder) { [weak self] in
+                guard let self, self.completionsOpen else { return }
+                self.openCompletions()
+            }
+        }
         let results = Completions.suggestions(
             for: context,
             commands: pathCommands,
             entries: Completions.entries(for: context.token, cwd: folder),
             history: history.entries.map(\.command),
-            branches: branches
+            branches: branches,
+            spec: spec,
+            generatorValues: generatorValues,
+            project: projectCommands,
+            predictions: sequences.next(after: lastCommand)
         )
         completions = results
         completionIndex = 0
@@ -372,6 +394,12 @@ final class PromptEditor: ObservableObject {
         send(command + "\r")
         if !command.trimmingCharacters(in: .whitespaces).isEmpty {
             history.add(.init(command: command, at: Date()))
+            // Learn the pair, so next time the line starts where you left off.
+            if let previous = lastCommand {
+                sequences.add(previous: previous, next: command, at: Int(Date().timeIntervalSince1970))
+            }
+            sequences.add(command: command, in: cwd)
+            lastCommand = command
         }
         deactivate()
     }
@@ -410,7 +438,10 @@ final class PromptEditor: ObservableObject {
             suggestion = nil
             return
         }
-        suggestion = history.suggestion(for: line.text)
+        // What usually follows the last command wins over a plain history
+        // match, since it knows where you are in a sequence.
+        suggestion = sequences.prediction(after: lastCommand, matching: line.text, in: cwd)
+            ?? history.suggestion(for: line.text)
     }
 
     /// History is read from the shells' own files, off the main thread.
@@ -419,12 +450,16 @@ final class PromptEditor: ObservableObject {
         historyLoadedAt = Date()
         DispatchQueue.global(qos: .userInitiated).async {
             let loaded = CommandHistory.load()
+            // The order in the file is the order they were run: that is what
+            // makes the sequence table worth having.
+            let sequences = CommandSequences(history: loaded.entries.map(\.command))
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 // Keep anything typed this session on top of the file's.
                 var merged = loaded
                 for entry in self.history.entries { merged.add(entry) }
                 self.history = merged
+                self.sequences = sequences
                 self.refreshSuggestion()
             }
         }
