@@ -12,12 +12,15 @@ enum DebugSnapshot {
     /// Set while a SwiftUI overlay covers the terminal, so the terminal image
     /// isn't composited over it.
     static var overlayVisible = false
+    /// Set while a SwiftUI cover sits over part of the terminal.
+    static var coverActive = false
 
     /// Toasts draw over the terminal area, so the composited terminal image
     /// would erase them from the capture.
     @MainActor
     static var overlaysOnTop: Bool {
         overlayVisible || !ToastCenter.shared.visibleToasts.isEmpty || !AgentBannerCenter.shared.banners.isEmpty
+            || coverActive
     }
     static func start() {
         // Encoding window PNGs is main-thread heavy: debug builds only.

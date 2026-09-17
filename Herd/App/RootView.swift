@@ -10,6 +10,10 @@ struct RootView: View {
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var confirmations = ConfirmCenter.shared
+    @StateObject private var terminalAnchor = TerminalAnchor()
+
+    /// Where the terminal starts across the window.
+    private var sidebarInset: CGFloat { ui.sidebarVisible ? Theme.sidebarWidth + 1 : 0 }
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -107,6 +111,19 @@ struct RootView: View {
         .onChange(of: slash.isOpen) { _, open in DebugSnapshot.overlayVisible = open }
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlayVisible = id != nil }
         .onChange(of: store.snapshot.focusedPaneId) { _, _ in slash.resetTyping() }
+        .overlay(alignment: .topLeading) {
+            // The engine's chrome row travels down with bottom-anchored
+            // content. Only a root-level overlay paints above the hosted
+            // terminal view, so the cover lives here rather than on it.
+            let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil }()
+            if let cover = terminalAnchor.chromeCover {
+                Color(hex: TerminalTheme.named(settings.values.themeName).background)
+                    .frame(width: cover.width, height: cover.height)
+                    .offset(x: sidebarInset + cover.minX,
+                            y: Theme.titleBarHeight + Theme.tabBarHeight + cover.minY)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay { ConfirmDialog(center: confirmations) }
         .overlay {
             if ui.paletteVisible {
@@ -160,11 +177,13 @@ struct RootView: View {
                 environment: session.environment,
                 workingDirectory: NSHomeDirectory(),
                 hiddenTopRows: HerdrSession.hiddenTopRows,
+                anchor: terminalAnchor,
                 onTitleChange: { _ in },
                 onExit: { NSApp.terminate(nil) }
             )
             .background(Color(hex: TerminalTheme.named(settings.values.themeName).background)
                 .opacity(settings.values.backgroundOpacity))
+
         } else {
             VStack(spacing: 8) {
                 Text("Terminal engine missing").font(.system(size: 14, weight: .semibold))

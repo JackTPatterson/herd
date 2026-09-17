@@ -1005,3 +1005,75 @@ final class BranchRunTests: XCTestCase {
         XCTAssertEqual(worktreeRuns[0].worktreeName, "spike")
     }
 }
+
+final class ShellSyntaxTests: XCTestCase {
+    private func roles(_ line: String) -> [(String, ShellSyntax.Role)] {
+        ShellSyntax.spans(in: line).map { (String(line[$0.range]), $0.role) }
+    }
+
+    func testCommandsFlagsPathsAndStringsAreDistinguished() {
+        let parsed = roles("git commit -m \"first pass\" ./src")
+        XCTAssertEqual(parsed.map(\.0), ["git", "commit", "-m", "\"first pass\"", "./src"])
+        XCTAssertEqual(parsed.map(\.1), [.command, .argument, .flag, .string, .path])
+
+        // A builtin reads differently from a program.
+        XCTAssertEqual(roles("cd ~/Developer").map(\.1), [.builtin, .path])
+        XCTAssertEqual(roles("$EDITOR notes.md").map(\.1), [.variable, .argument])
+    }
+
+    func testPipesStartANewCommandAndCommentsRunToTheEnd() {
+        let parsed = roles("cat log | grep -i error # find failures")
+        XCTAssertEqual(parsed.map(\.0), ["cat", "log", "|", "grep", "-i", "error", "# find failures"])
+        XCTAssertEqual(parsed.map(\.1), [.command, .argument, .separator, .command, .flag, .argument, .comment])
+        // A # inside a quoted string is not a comment.
+        XCTAssertEqual(roles("echo \"# not a comment\"").map(\.1), [.builtin, .string])
+    }
+
+    func testUnterminatedQuotesAndEmptyLinesDontTrip() {
+        XCTAssertEqual(roles("echo \"open").map(\.0), ["echo", "\"open"])
+        XCTAssertTrue(ShellSyntax.spans(in: "   ").isEmpty)
+        XCTAssertTrue(ShellSyntax.looksLikePath("~/x"))
+        XCTAssertFalse(ShellSyntax.looksLikePath("https://example.com"))
+    }
+}
+
+final class CommandHistoryTests: XCTestCase {
+    func testZshFishAndPlainFormatsAllParse() {
+        let zsh = CommandHistory.parse(": 1700000000:0;git status\n: 1700000100:0;npm run build\n")
+        XCTAssertEqual(zsh.map(\.command), ["git status", "npm run build"])
+        XCTAssertEqual(zsh.first?.at, Date(timeIntervalSince1970: 1_700_000_000))
+
+        let plain = CommandHistory.parse("ls -la\ncd /tmp\n")
+        XCTAssertEqual(plain.map(\.command), ["ls -la", "cd /tmp"])
+        XCTAssertNil(plain.first?.at)
+
+        let fish = CommandHistory.parse("- cmd: git push\n  when: 1700000200\n- cmd: cargo test\n  when: 1700000300\n", fish: true)
+        XCTAssertEqual(fish.map(\.command), ["git push", "cargo test"])
+        XCTAssertEqual(fish.last?.at, Date(timeIntervalSince1970: 1_700_000_300))
+    }
+
+    func testSuggestionsPreferRecentAndRepeatedCommands() {
+        let now = Date()
+        var history = CommandHistory()
+        history.add(.init(command: "git status", at: now.addingTimeInterval(-40 * 86_400)))
+        history.add(.init(command: "git stash pop", at: now.addingTimeInterval(-60)))
+        history.add(.init(command: "git status", at: now.addingTimeInterval(-30 * 86_400)))
+        XCTAssertEqual(history.suggestion(for: "git st"), "git stash pop")
+
+        // Repetition wins once recency is comparable.
+        var repeated = CommandHistory()
+        for _ in 0..<5 { repeated.add(.init(command: "npm run build", at: now.addingTimeInterval(-3_600))) }
+        repeated.add(.init(command: "npm run bench", at: now.addingTimeInterval(-3_500)))
+        XCTAssertEqual(repeated.suggestion(for: "npm run b"), "npm run build")
+    }
+
+    func testShortPrefixesAndExactMatchesSuggestNothing() {
+        var history = CommandHistory()
+        history.add(.init(command: "cargo test", at: Date()))
+        XCTAssertNil(history.suggestion(for: "c"))
+        XCTAssertNil(history.suggestion(for: "cargo test"))
+        XCTAssertNil(history.suggestion(for: "zzz"))
+        XCTAssertEqual(history.suggestion(for: " ca"), "cargo test")
+        XCTAssertEqual(history.ranked(matching: "cargo"), ["cargo test"])
+    }
+}

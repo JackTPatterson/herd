@@ -23,6 +23,7 @@ struct HerdSettings: Codable, Equatable {
     var backgroundOpacity: Double = 1
     var backgroundBlur = false
     var windowPadding: WindowPadding = .normal
+    var textPosition: TextPosition = .bottom
     var paneBorders: PaneBorders = .auto
     var paneGaps = true
     var paneScrollbars = true
@@ -62,6 +63,11 @@ struct HerdSettings: Codable, Equatable {
     enum ShellMode: String, Codable, CaseIterable { case auto, login, nonLogin = "non_login" }
     enum CursorStyle: String, Codable, CaseIterable { case block, bar, underline }
     enum WindowPadding: String, Codable, CaseIterable { case compact, normal, roomy }
+    /// Where a pane's output sits when it doesn't fill the pane.
+    enum TextPosition: String, Codable, CaseIterable {
+        case top, bottom
+        var title: String { self == .top ? "Top" : "Bottom" }
+    }
     enum PaneBorders: String, Codable, CaseIterable { case auto, always, off }
     enum OptionAsAlt: String, Codable, CaseIterable { case off, left, right, both }
     enum ClipboardAccess: String, Codable, CaseIterable { case ask, allow, deny }
@@ -110,6 +116,7 @@ struct HerdSettings: Codable, Equatable {
         backgroundOpacity = value("backgroundOpacity", defaults.backgroundOpacity)
         backgroundBlur = value("backgroundBlur", defaults.backgroundBlur)
         windowPadding = value("windowPadding", defaults.windowPadding)
+        textPosition = value("textPosition", defaults.textPosition)
         paneBorders = value("paneBorders", defaults.paneBorders)
         paneGaps = value("paneGaps", defaults.paneGaps)
         paneScrollbars = value("paneScrollbars", defaults.paneScrollbars)

@@ -268,6 +268,20 @@ private struct TerminalSettings: View {
                 SliderControl(value: $settings.values.scrollbackMegabytes, range: 1...100, step: 1) { "\(Int($0)) MB" }
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Terminal text",
+                detail: "Where output sits while it doesn't fill the pane. Bottom keeps the prompt where you look; Top is how a terminal normally fills."
+            ) {
+                Picker("", selection: $settings.values.textPosition) {
+                    ForEach(HerdSettings.TextPosition.allCases, id: \.self) { position in
+                        Text(position.title).tag(position)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+            }
+            SettingsDivider()
             SettingsRow(title: "Copy on select", detail: "Copy text as soon as you select it with the mouse.") {
                 Toggle("", isOn: $settings.values.copyOnSelect).labelsHidden().toggleStyle(.switch)
             }

@@ -125,8 +125,10 @@ struct HerdTerminalView: NSViewRepresentable {
     let command: String
     let environment: [String: String]
     let workingDirectory: String?
-    /// Terminal rows clipped off the top (Herd hides herdr's own tab row).
+    /// Terminal rows clipped off the top (Herd hides the engine's tab row).
     var hiddenTopRows = 0
+    /// Where that row lands when content is anchored to the bottom.
+    @ObservedObject var anchor: TerminalAnchor
     var onTitleChange: (String) -> Void = { _ in }
     var onExit: () -> Void = {}
 
@@ -135,6 +137,7 @@ struct HerdTerminalView: NSViewRepresentable {
         environment: [String: String],
         workingDirectory: String?,
         hiddenTopRows: Int = 0,
+        anchor: TerminalAnchor,
         onTitleChange: @escaping (String) -> Void = { _ in },
         onExit: @escaping () -> Void = {}
     ) {
@@ -142,6 +145,7 @@ struct HerdTerminalView: NSViewRepresentable {
         self.environment = environment
         self.workingDirectory = workingDirectory
         self.hiddenTopRows = hiddenTopRows
+        self.anchor = anchor
         self.onTitleChange = onTitleChange
         self.onExit = onExit
     }
@@ -159,7 +163,7 @@ struct HerdTerminalView: NSViewRepresentable {
         // Grab keyboard focus once we're in a window.
         view.focusOnAttach = true
         guard hiddenTopRows > 0 else { return view }
-        return TopRowClippingView(surfaceView: view, hiddenRows: hiddenTopRows)
+        return TopRowClippingView(surfaceView: view, hiddenRows: hiddenTopRows, anchor: anchor)
     }
 
     @MainActor
@@ -172,25 +176,107 @@ struct HerdTerminalView: NSViewRepresentable {
     }
 }
 
+/// Where the engine's own chrome row ends up once content is bottom
+/// anchored, so SwiftUI can cover it — the terminal surface ignores AppKit
+/// clipping, but SwiftUI overlays draw above it.
+@MainActor
+final class TerminalAnchor: ObservableObject {
+    @Published var chromeCover: CGRect?
+}
+
+/// A plain top-left-origin container.
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// Hosts a surface taller than itself, shifted up so its first `hiddenRows`
 /// terminal rows sit above the visible bounds and are clipped away.
 final class TopRowClippingView: NSView {
     let surfaceView: Ghostty.SurfaceView
     let hiddenRows: Int
     private var retryScheduled = false
+    /// Blank rows below the cursor, so short output can sit at the bottom of
+    /// the pane instead of clinging to the top.
+    private var blankRowsBelow = 0
+    private var anchorTimer: Timer?
+    private let stage = FlippedView()
+    private let anchor: TerminalAnchor
+    private var lastCursorRow: UInt16 = .max
 
-    init(surfaceView: Ghostty.SurfaceView, hiddenRows: Int) {
+    init(surfaceView: Ghostty.SurfaceView, hiddenRows: Int, anchor: TerminalAnchor) {
         self.surfaceView = surfaceView
         self.hiddenRows = hiddenRows
+        self.anchor = anchor
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         wantsLayer = true
         layer?.masksToBounds = true
-        addSubview(surfaceView)
+        // The stage clips the surface's hidden top rows; moving the stage
+        // down bottom-anchors the content without resizing the grid, and the
+        // outer clip hides whatever hangs below.
+        stage.wantsLayer = true
+        stage.layer?.masksToBounds = true
+        stage.addSubview(surfaceView)
+        addSubview(stage)
+        startBottomAnchor()
+    }
+
+    deinit {
+        anchorTimer?.invalidate()
+    }
+
+    /// Watches the cursor so the shift follows the prompt as output grows.
+    private func startBottomAnchor() {
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateBottomAnchor() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        anchorTimer = timer
+    }
+
+    @MainActor
+    private func updateBottomAnchor() {
+        let rows = SettingsStore.shared.values.textPosition == .bottom ? measureBlankRowsBelowCursor() : 0
+        guard rows != blankRowsBelow else { return }
+        blankRowsBelow = rows
+        needsLayout = true
+    }
+
+    /// How many rows the content can drop by: the run of blank rows under the
+    /// cursor. Zero unless everything below the cursor really is empty, which
+    /// also means a split pane's output never gets shifted out of view.
+    @MainActor
+    private func measureBlankRowsBelowCursor() -> Int {
+        guard let surface = surfaceView.surface else { return 0 }
+        var metrics = ghostty_surface_grid_metrics_s()
+        guard ghostty_surface_grid_metrics(surface, &metrics), metrics.cursor_in_viewport else { return 0 }
+        let below = Int(metrics.rows) - 1 - Int(metrics.cursor_row)
+        guard below > 0 else { return 0 }
+        lastCursorRow = metrics.cursor_row
+
+        var text = ghostty_text_s()
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                                      x: 0, y: UInt32(metrics.cursor_row) + 1),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            rectangle: false
+        )
+        guard ghostty_surface_read_text(surface, selection, &text) else { return 0 }
+        defer { ghostty_surface_free_text(surface, &text) }
+        let tail = String(cString: text.text)
+        guard tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return 0 }
+        return below
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     override var isFlipped: Bool { true }
+
+    /// One terminal row in points.
+    var cellHeight: CGFloat {
+        guard let surface = surfaceView.surface else { return 0 }
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        return CGFloat(ghostty_surface_size(surface).cell_height_px) / scale
+    }
 
     /// Height of the hidden rows in points; 0 until the surface reports a grid.
     var hiddenHeight: CGFloat {
@@ -203,7 +289,20 @@ final class TopRowClippingView: NSView {
     override func layout() {
         super.layout()
         let offset = hiddenHeight
+        // Shifting the surface down by the blank rows bottom-aligns the
+        // content; the surface moves as a whole, so input still lands right.
+        let drop = min(cellHeight * CGFloat(blankRowsBelow), max(0, bounds.height - cellHeight))
+        // Set every pass: the backing layers don't exist yet at init, so
+        // masking set there silently never applies.
+        layer?.masksToBounds = true
+        stage.layer?.masksToBounds = true
+        stage.frame = NSRect(x: 0, y: drop, width: bounds.width, height: bounds.height)
         surfaceView.frame = NSRect(x: 0, y: -offset, width: bounds.width, height: bounds.height + offset)
+        layer?.backgroundColor = Theme.palette.nsColor(\.background).cgColor
+        // The engine's chrome row rides down with the content; hand its
+        // position to SwiftUI, which can paint over the terminal.
+        let cover = drop > 0 ? CGRect(x: 0, y: drop - offset, width: bounds.width, height: offset) : nil
+        if anchor.chromeCover != cover { anchor.chromeCover = cover }
         if offset == 0, !retryScheduled {
             retryScheduled = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in

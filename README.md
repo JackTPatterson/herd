@@ -158,6 +158,15 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Terminal text position
+
+Settings → Terminal chooses where a pane's output sits while it doesn't fill
+the pane: **Bottom** keeps the prompt at the foot of the pane, the way Warp
+does, and **Top** is how a terminal normally fills from the first row. Herd
+bottom-anchors by moving the surface, never by resizing the grid, so the
+shell never reflows; the drop only applies while every row below the cursor
+is blank, which also leaves split panes alone.
+
 ## Branches in the sidebar
 
 A workspace card shows the space and what is running in it; the branch sits
