@@ -203,7 +203,7 @@ enum PaletteCatalog {
             let brand = AgentBrand.forAgent(agent?.agent)
             return PaletteItem(
                 id: "tab.\(tab.tabId)", kind: .tab,
-                title: tab.label.isEmpty ? "Tab \(tab.number)" : tab.label,
+                title: TabAutoName.display(label: tab.label, number: tab.number),
                 subtitle: [labels[tab.workspaceId], "tab \(tab.number)"].compactMap { $0 }.joined(separator: " · "),
                 icon: brand.map { .agent($0) } ?? .symbol("terminal"),
                 effect: .run { store.focusTabAnywhere(tab) }

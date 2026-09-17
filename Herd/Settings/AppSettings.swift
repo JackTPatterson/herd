@@ -48,6 +48,7 @@ struct HerdSettings: Codable, Equatable {
     var slashMenu = true
     var slashRunsCommands = true
     var autoNameTabs = true
+    var showTips = true
 
     // MARK: Advanced (herdr)
     var worktreesDirectory = "~/.herd/worktrees"
@@ -113,6 +114,7 @@ struct HerdSettings: Codable, Equatable {
         slashMenu = value("slashMenu", defaults.slashMenu)
         slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
+        showTips = value("showTips", defaults.showTips)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)
         // Move off the old default unless worktrees already live there.
         if worktreesDirectory == Self.legacyWorktreesDirectory,

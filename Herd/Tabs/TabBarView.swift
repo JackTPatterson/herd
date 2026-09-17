@@ -62,7 +62,7 @@ private struct TabItem: View {
             if let brand {
                 AgentLogo(brand: brand, size: 11)
             }
-            Text(tab.label.isEmpty ? "\(tab.number)" : tab.label)
+            Text(TabAutoName.display(label: tab.label, number: tab.number))
                 .font(Theme.uiFont)
                 .fontWeight(isActive ? .medium : .regular)
                 .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)

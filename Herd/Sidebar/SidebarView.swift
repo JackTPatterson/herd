@@ -27,6 +27,7 @@ struct SidebarView: View {
                 .padding(.vertical, 8)
                 .animation(motion.animation(.sidebar), value: store.activeGroups)
             }
+            TipCard(store: store)
             if !store.idleWorkspaces.isEmpty {
                 IdleDock(store: store)
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)

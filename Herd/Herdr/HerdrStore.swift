@@ -60,6 +60,7 @@ final class HerdrStore: ObservableObject {
         }
         pinnedWorkspaceIds = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
         manuallyNamedTabIds = Set(defaults.stringArray(forKey: Self.manualNamesKey) ?? [])
+        seenTips = Set(defaults.stringArray(forKey: Self.seenTipsKey) ?? [])
         let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
         if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
     }
@@ -178,6 +179,7 @@ final class HerdrStore: ObservableObject {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
+        refreshTip()
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot
@@ -195,6 +197,55 @@ final class HerdrStore: ObservableObject {
             }
         }
         return branches
+    }
+
+    // MARK: - Tips
+
+    /// The tip shown at the foot of the sidebar, if any.
+    @Published private(set) var currentTip: Tip?
+    private var seenTips: Set<String> = []
+    private static let seenTipsKey = "herd.tips.seen" + keySuffix
+
+    private func refreshTip() {
+        guard SettingsStore.shared.values.showTips else {
+            currentTip = nil
+            return
+        }
+        let context = tipContext()
+        // Keep the current tip while it still fits the session.
+        if let currentTip, currentTip.applies(context) { return }
+        currentTip = Tips.next(seen: seenTips, context: context)
+        markTipSeen()
+    }
+
+    /// Steps to another tip on click.
+    func nextTip() {
+        currentTip = Tips.following(currentTip, seen: seenTips, context: tipContext())
+        markTipSeen()
+    }
+
+    /// The × on the card: no more tips until Settings turns them back on.
+    func dismissTips() {
+        SettingsStore.shared.values.showTips = false
+        currentTip = nil
+    }
+
+    private func markTipSeen() {
+        guard let currentTip, seenTips.insert(currentTip.id).inserted else { return }
+        UserDefaults.standard.set(Array(seenTips), forKey: Self.seenTipsKey)
+    }
+
+    private func tipContext() -> TipContext {
+        TipContext(
+            workspaceCount: snapshot.workspaces.count,
+            tabCount: snapshot.tabs.count,
+            agentCount: snapshot.agents.count,
+            idleCount: idleWorkspaces.count,
+            hasRecoverableSessions: !recovery.resumableSessions().isEmpty,
+            hasUnnamedTabs: snapshot.tabs.contains { TabAutoName.isUnnamed($0.label) },
+            hasWorktree: snapshot.workspaces.contains { $0.worktree != nil },
+            hasPlugins: !plugins.isEmpty
+        )
     }
 
     // MARK: - Tab names
@@ -383,7 +434,7 @@ final class HerdrStore: ObservableObject {
 
     private func tabLabel(_ id: String) -> String {
         snapshot.tabs.first { $0.tabId == id }.map { tab in
-            tab.label.isEmpty || Int(tab.label) != nil ? "tab \(tab.label.isEmpty ? String(tab.number) : tab.label)" : tab.label
+            TabAutoName.isUnnamed(tab.label) ? "the new tab" : tab.label
         } ?? "tab"
     }
 

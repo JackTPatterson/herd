@@ -193,6 +193,11 @@ visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
 | ⌘N | New workspace |
 | ⌘B | Toggle sidebar |
 
+## License
+
+MIT — see `LICENSE`. Herd bundles and derives from other MIT-licensed work,
+credited below.
+
 ## Borrowed code and assets
 
 - Ghostty macOS surface view — MIT (`Herd/Terminal/Ghostty/LICENSE-ghostty`)

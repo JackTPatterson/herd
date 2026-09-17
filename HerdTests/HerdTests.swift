@@ -829,3 +829,54 @@ final class ClipboardPreviewTests: XCTestCase {
         XCTAssertEqual(ClipboardPreview.summary(String(repeating: "x", count: 80), limit: 10), "xxxxxxxxx…")
     }
 }
+
+final class TipTests: XCTestCase {
+    private let deck = [
+        Tip(id: "always", title: "A", body: "a"),
+        Tip(id: "agents", title: "B", body: "b", applies: { $0.agentCount > 0 }),
+        Tip(id: "idle", title: "C", body: "c", applies: { $0.idleCount > 0 }),
+    ]
+
+    func testOnlyTipsThatFitTheSessionAreOffered() {
+        let quiet = TipContext()
+        XCTAssertEqual(Tips.next(seen: [], context: quiet, deck: deck)?.id, "always")
+        // With nothing new to say, it repeats rather than showing nothing.
+        XCTAssertEqual(Tips.next(seen: ["always"], context: quiet, deck: deck)?.id, "always")
+
+        var busy = TipContext()
+        busy.agentCount = 2
+        XCTAssertEqual(Tips.next(seen: ["always"], context: busy, deck: deck)?.id, "agents")
+        XCTAssertNil(Tips.next(seen: [], context: quiet, deck: [deck[1]]))
+    }
+
+    func testSteppingThroughMovesOnAndWrapsAround() {
+        var context = TipContext()
+        context.agentCount = 1
+        context.idleCount = 1
+        let first = Tips.next(seen: [], context: context, deck: deck)
+        XCTAssertEqual(first?.id, "always")
+        let second = Tips.following(first, seen: ["always"], context: context, deck: deck)
+        XCTAssertEqual(second?.id, "agents")
+        let third = Tips.following(second, seen: ["always", "agents"], context: context, deck: deck)
+        XCTAssertEqual(third?.id, "idle")
+        // All seen: it wraps instead of going blank.
+        XCTAssertEqual(Tips.following(third, seen: ["always", "agents", "idle"], context: context, deck: deck)?.id, "always")
+    }
+
+    func testEveryShippedTipIsDistinctAndReadable() {
+        XCTAssertEqual(Set(Tips.all.map(\.id)).count, Tips.all.count)
+        for tip in Tips.all {
+            XCTAssertFalse(tip.title.isEmpty)
+            XCTAssertLessThan(tip.title.count, 48, tip.id)
+            XCTAssertLessThan(tip.body.count, 160, tip.id)
+        }
+    }
+
+    func testUnnamedTabsReadAsWords() {
+        XCTAssertEqual(TabAutoName.display(label: "3", number: 3), "New tab")
+        XCTAssertEqual(TabAutoName.display(label: "", number: 1), "New tab")
+        XCTAssertEqual(TabAutoName.display(label: "Fix the lag", number: 2), "Fix the lag")
+        XCTAssertTrue(TabAutoName.isUnnamed("12"))
+        XCTAssertFalse(TabAutoName.isUnnamed("v2 rollout"))
+    }
+}

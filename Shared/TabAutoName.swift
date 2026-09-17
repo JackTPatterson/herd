@@ -21,6 +21,19 @@ enum TabAutoName {
         return shells.union(agents.map { $0.lowercased() })
     }
 
+    /// herdr numbers a new tab; Herd shows that as words until the tab has
+    /// a name of its own.
+    static let unnamedLabel = "New tab"
+
+    static func isUnnamed(_ label: String) -> Bool {
+        label.isEmpty || Int(label) != nil
+    }
+
+    /// What a tab should read as.
+    static func display(label: String, number: Int) -> String {
+        isUnnamed(label) ? unnamedLabel : label
+    }
+
     /// Cleans a pane's terminal title into a tab label, or nil when the
     /// title says nothing worth showing.
     static func label(from title: String?, cwd: String? = nil) -> String? {

@@ -98,6 +98,13 @@ private struct GeneralSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Startup & quitting") {
+            SettingsRow(
+                title: "Show tips",
+                detail: "A card at the foot of the sidebar with one thing Herd does that is easy to miss. Click it for another."
+            ) {
+                Toggle("", isOn: $settings.values.showTips).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
             SettingsRow(title: "Confirm before quitting", detail: "Quitting Herd leaves terminals and agents running in the background.") {
                 Toggle("", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(.switch)
             }
