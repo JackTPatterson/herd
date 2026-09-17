@@ -6,21 +6,32 @@ import SwiftUI
 struct TabBarView: View {
     @ObservedObject var store: HerdrStore
     @ObservedObject private var motion = MotionPreferences.shared
-    @Namespace private var indicator
+    @Namespace private var selection
+
+    /// One spring for every tab change so moves, opens, and closes stay in step.
+    static let spring = Animation.spring(response: 0.26, dampingFraction: 0.88)
 
     var body: some View {
+        let tabs = store.displayedTabs
+        let focusedId = store.displayedFocusedTabId
+
         HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(store.focusedWorkspaceTabs) { tab in
-                        TabItem(store: store, tab: tab, indicator: indicator)
-                            .transition(motion.animates(.tabs)
-                                ? .asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .opacity)
-                                : .identity)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(tabs) { tab in
+                            TabItem(store: store, tab: tab, isActive: tab.tabId == focusedId, selection: selection)
+                                .id(tab.tabId)
+                                .transition(motion.animates(.tabs) ? .tabCollapse : .identity)
+                        }
                     }
+                    .animation(motion.animation(.tabs, Self.spring), value: tabs.map(\.tabId))
+                    .animation(motion.animation(.tabs, Self.spring), value: focusedId)
                 }
-                .animation(motion.animation(.tabs), value: store.focusedWorkspaceTabs.map(\.tabId))
-                .animation(motion.animation(.tabs, .smooth(duration: 0.18)), value: store.snapshot.focusedTabId)
+                .onChange(of: focusedId) { _, id in
+                    guard let id else { return }
+                    motion.perform(.tabs, Self.spring) { proxy.scrollTo(id) }
+                }
             }
             NewTabButton { store.newTab() }
             Spacer(minLength: 0)
@@ -34,11 +45,12 @@ struct TabBarView: View {
 private struct TabItem: View {
     @ObservedObject var store: HerdrStore
     let tab: HerdrTab
-    let indicator: Namespace.ID
+    let isActive: Bool
+    let selection: Namespace.ID
+    @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
 
     var body: some View {
-        let isActive = tab.tabId == store.snapshot.focusedTabId || (store.snapshot.focusedTabId == nil && tab.focused)
         let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
         let brand = AgentBrand.forAgent(agent?.agent)
 
@@ -51,7 +63,8 @@ private struct TabItem: View {
                 AgentLogo(brand: brand, size: 11)
             }
             Text(tab.label.isEmpty ? "\(tab.number)" : tab.label)
-                .font(isActive ? Theme.uiFontMedium : Theme.uiFont)
+                .font(Theme.uiFont)
+                .fontWeight(isActive ? .medium : .regular)
                 .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -72,21 +85,25 @@ private struct TabItem: View {
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .frame(minWidth: 120, maxWidth: 220, maxHeight: .infinity)
-        .background(
+        .background {
             ZStack {
-                isActive ? Theme.terminalBackground : (hovered ? Theme.hover : Theme.chrome)
-                if let hue = brand?.hueHex {
-                    Color(hex: hue).opacity(isActive ? 0.08 : Theme.tabColorOpacity)
+                if hovered && !isActive { Theme.hover }
+                if let hue = brand?.hueHex, !isActive {
+                    Color(hex: hue).opacity(Theme.tabColorOpacity)
+                }
+                // A single selection surface slides between tabs.
+                if isActive {
+                    ZStack(alignment: .top) {
+                        Theme.terminalBackground
+                        if let hue = brand?.hueHex { Color(hex: hue).opacity(0.08) }
+                        Rectangle()
+                            .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
+                            .frame(height: 2)
+                    }
+                    .matchedGeometryEffect(id: "selectedTab", in: selection)
                 }
             }
-        )
-        .overlay(alignment: .top) {
-            if isActive {
-                Rectangle()
-                    .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
-                    .frame(height: 2)
-                    .matchedGeometryEffect(id: "activeTabIndicator", in: indicator)
-            }
+            .animation(motion.animation(.tabs, .easeOut(duration: 0.12)), value: hovered)
         }
         .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
         .contentShape(Rectangle())
@@ -96,6 +113,45 @@ private struct TabItem: View {
             Button("Close Tab") { store.closeTab(tab.tabId) }
         }
         .help(tab.label)
+    }
+}
+
+/// Opening a tab grows it from zero width and closing shrinks it away, so
+/// neighbors glide instead of jumping.
+private struct WidthCollapse: Layout {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let ideal = subviews.first?.sizeThatFits(ProposedViewSize(width: nil, height: proposal.height)) ?? .zero
+        return CGSize(width: ideal.width * progress, height: ideal.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        let ideal = child.sizeThatFits(ProposedViewSize(width: nil, height: bounds.height))
+        child.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: ideal.width, height: bounds.height))
+    }
+}
+
+private struct TabCollapseModifier: ViewModifier {
+    let progress: CGFloat
+
+    func body(content: Content) -> some View {
+        WidthCollapse(progress: progress) {
+            content.opacity(progress)
+        }
+        .clipped()
+    }
+}
+
+private extension AnyTransition {
+    static var tabCollapse: AnyTransition {
+        .modifier(active: TabCollapseModifier(progress: 0), identity: TabCollapseModifier(progress: 1))
     }
 }
 

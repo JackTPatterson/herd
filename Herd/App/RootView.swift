@@ -32,8 +32,12 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            ToastStack(center: ToastCenter.shared)
-                .id(settings.values.themeName)
+            // Toasts sit above the recovery panel, both anchored bottom-right.
+            VStack(alignment: .trailing, spacing: 8) {
+                ToastStack(center: ToastCenter.shared)
+                RecoveryOverlay(recovery: store.recovery)
+            }
+            .id(settings.values.themeName)
         }
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }
@@ -198,6 +202,28 @@ private struct TitleBar: View {
             Text(store.isConnected ? "herdr" : "connecting")
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textTertiary)
+        }
+    }
+}
+
+/// Shows the recovery panel under the title bar while sessions are offered.
+private struct RecoveryOverlay: View {
+    @ObservedObject var recovery: AgentRecoveryController
+    @ObservedObject private var motion = MotionPreferences.shared
+
+    var body: some View {
+        ZStack {
+            if !recovery.offered.isEmpty {
+                RecoveryPanel(recovery: recovery)
+                    .padding([.trailing, .bottom], 12)
+                    .transition(motion.animates(.palette)
+                        ? .opacity.combined(with: .move(edge: .bottom))
+                        : .identity)
+            }
+        }
+        .animation(motion.animation(.palette, .smooth(duration: 0.18)), value: recovery.offered.isEmpty)
+        .onChange(of: recovery.offered.isEmpty) { _, empty in
+            DebugSnapshot.overlayVisible = !empty
         }
     }
 }

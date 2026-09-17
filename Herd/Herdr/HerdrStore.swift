@@ -26,9 +26,11 @@ final class HerdrStore: ObservableObject {
             repartition()
         }
     }
-    private static let stampsKey = "herd.activity.stamps"
-    private static let pinnedKey = "herd.activity.pinned"
-    private static let idleAfterKey = "herd.activity.idleAfter"
+    // Isolated sessions (HERD_SESSION) keep their own activity state.
+    private static let keySuffix = HerdrSession.name == "herd" ? "" : ".\(HerdrSession.name)"
+    private static let stampsKey = "herd.activity.stamps" + keySuffix
+    private static let pinnedKey = "herd.activity.pinned" + keySuffix
+    private static let idleAfterKey = "herd.activity.idleAfter" + keySuffix
     private var lastStampSave = Date.distantPast
     /// Workspaces marked idle by hand: viewing them doesn't count as use
     /// until the user focuses them again.
@@ -39,6 +41,7 @@ final class HerdrStore: ObservableObject {
     @Published var lastError: String?
 
     let client: HerdrClient
+    let recovery: AgentRecoveryController
     private let resolver = ProjectGrouping.CachedResolver()
     private var refreshScheduled = false
     private var eventThread: Thread?
@@ -46,6 +49,7 @@ final class HerdrStore: ObservableObject {
 
     init(client: HerdrClient) {
         self.client = client
+        recovery = AgentRecoveryController(client: client)
         let defaults = UserDefaults.standard
         if let raw = defaults.dictionary(forKey: Self.stampsKey) as? [String: Double] {
             activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
@@ -65,6 +69,34 @@ final class HerdrStore: ObservableObject {
         return snapshot.tabs(inWorkspace: id)
     }
 
+    // MARK: Optimistic tab state
+    // Tab clicks and closes show immediately instead of waiting for herdr's
+    // round trip, so the tab bar animates the moment you act.
+    @Published private(set) var pendingFocusedTabId: String?
+    @Published private(set) var pendingClosedTabIds: Set<String> = []
+    private var pendingFocusDeadline = Date.distantPast
+
+    /// Tabs the tab bar shows: the focused workspace's, minus ones closing.
+    var displayedTabs: [HerdrTab] {
+        focusedWorkspaceTabs.filter { !pendingClosedTabIds.contains($0.tabId) }
+    }
+
+    var displayedFocusedTabId: String? {
+        pendingFocusedTabId ?? snapshot.focusedTabId ?? focusedWorkspaceTabs.first(where: \.focused)?.tabId
+    }
+
+    private func settleOptimisticTabs(with snapshot: HerdrSnapshot) {
+        if let pending = pendingFocusedTabId,
+           snapshot.focusedTabId == pending || Date() > pendingFocusDeadline
+            || !snapshot.tabs.contains(where: { $0.tabId == pending }) {
+            pendingFocusedTabId = nil
+        }
+        if !pendingClosedTabIds.isEmpty {
+            let remaining = pendingClosedTabIds.filter { id in snapshot.tabs.contains { $0.tabId == id } }
+            if remaining != pendingClosedTabIds { pendingClosedTabIds = remaining }
+        }
+    }
+
     // MARK: - Lifecycle
 
     func start() {
@@ -81,7 +113,11 @@ final class HerdrStore: ObservableObject {
                         Task { @MainActor [weak self] in self?.scheduleRefresh() }
                     })
                 } catch {
-                    Task { @MainActor [weak self] in self?.isConnected = false }
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if self.isConnected { self.recovery.connectionLost() }
+                        self.isConnected = false
+                    }
                 }
                 Thread.sleep(forTimeInterval: 0.5)
             }
@@ -111,14 +147,20 @@ final class HerdrStore: ObservableObject {
 
     func refresh() {
         let client = self.client
+        let inference = recovery.inferenceRequest()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try client.snapshot() }
             // Disk reads stay off the main thread.
-            let branches = (try? result.get()).map(Self.readBranches)
+            let snapshot = try? result.get()
+            let branches = snapshot.map(Self.readBranches)
+            let inferred = snapshot.flatMap { snapshot in
+                inference.map { AgentSessionFiles.infer(agents: snapshot.agents, firstSeen: $0) }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success(let snapshot):
+                    self.recovery.observe(snapshot, inferred: inferred ?? [:])
                     self.apply(snapshot, branches: branches ?? [:])
                 case .failure(let error):
                     self.lastError = String(describing: error)
@@ -128,6 +170,7 @@ final class HerdrStore: ObservableObject {
     }
 
     func apply(_ snapshot: HerdrSnapshot, branches: [String: String]) {
+        settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
@@ -308,11 +351,26 @@ final class HerdrStore: ObservableObject {
     }
 
     func focusWorkspace(_ id: String) { perform("workspace.focus", ["workspace_id": id]) }
-    func focusTab(_ id: String) { perform("tab.focus", ["tab_id": id]) }
+    func focusTab(_ id: String) {
+        pendingFocusedTabId = id
+        pendingFocusDeadline = Date().addingTimeInterval(1.5)
+        // Settles on the next snapshot, or after the deadline if herdr refused.
+        perform("tab.focus", ["tab_id": id], failure: "Couldn't switch tabs")
+    }
 
     func closeTab(_ id: String) {
         let label = tabLabel(id)
+        let tabs = displayedTabs
+        if id == displayedFocusedTabId, let index = tabs.firstIndex(where: { $0.tabId == id }), tabs.count > 1 {
+            // Show the neighbor herdr will focus while the close is in flight.
+            pendingFocusedTabId = tabs[index > 0 ? index - 1 : 1].tabId
+            pendingFocusDeadline = Date().addingTimeInterval(1.5)
+        }
+        pendingClosedTabIds.insert(id)
         perform("tab.close", ["tab_id": id], failure: "Couldn't close \(label)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.pendingClosedTabIds.remove(id)
+        }
     }
 
     func closeWorkspace(_ id: String) {
@@ -350,7 +408,7 @@ final class HerdrStore: ObservableObject {
 
     func selectAdjacentTab(offset: Int) {
         let tabs = focusedWorkspaceTabs
-        guard let current = tabs.firstIndex(where: { $0.tabId == snapshot.focusedTabId }) ?? tabs.firstIndex(where: \.focused),
+        guard let current = tabs.firstIndex(where: { $0.tabId == displayedFocusedTabId }) ?? tabs.firstIndex(where: \.focused),
               !tabs.isEmpty else { return }
         focusTab(tabs[(current + offset + tabs.count) % tabs.count].tabId)
     }
@@ -364,7 +422,7 @@ final class HerdrStore: ObservableObject {
     }
 
     func closeFocusedTab() {
-        guard let id = snapshot.focusedTabId ?? focusedWorkspaceTabs.first(where: \.focused)?.tabId else { return }
+        guard let id = displayedFocusedTabId else { return }
         closeTab(id)
     }
 

@@ -126,6 +126,10 @@ enum PaletteCatalog {
                 store.markIdle(workspace.workspaceId)
             })
         }
+        items.append(action("recoverSessions", "Recover Agent Sessions…", "arrow.counterclockwise.circle",
+                            keywords: ["resume", "restore", "claude", "codex", "crash", "restart", "history"]) {
+            store.recovery.showHistory()
+        })
         if !store.idleWorkspaces.isEmpty {
             let count = store.idleWorkspaces.count
             items.append(action("closeIdle", "Close \(count) Idle Workspace\(count == 1 ? "" : "s")…", "xmark.bin.fill",

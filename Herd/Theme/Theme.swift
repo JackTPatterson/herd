@@ -39,6 +39,7 @@ enum Theme {
     static let uiFont = Font.system(size: 12)
     static let uiFontMedium = Font.system(size: 12, weight: .medium)
     static let headerFont = Font.system(size: 10.5, weight: .semibold)
+    static let captionFont = Font.system(size: 10.5)
     static let monoFont = Font.system(size: 11.5, design: .monospaced)
 
     /// Shortcuts Herd's menus own; unbound in Ghostty so the surface lets them through.

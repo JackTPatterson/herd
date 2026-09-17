@@ -3,7 +3,15 @@ import Foundation
 /// How Herd launches and addresses its own herdr session.
 struct HerdrSession {
     /// Herd's named session, separate from a plain `herdr` in any terminal.
-    static let name = "herd"
+    /// `HERD_SESSION` runs an isolated session (used to test restarts).
+    static let name = ProcessInfo.processInfo.environment["HERD_SESSION"].flatMap { $0.isEmpty ? nil : $0 } ?? "herd"
+
+    /// Herd's support folder; isolated sessions get their own subfolder.
+    static var supportDirectory: URL {
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Herd", isDirectory: true)
+        return name == "herd" ? base : base.appendingPathComponent("sessions/\(name)", isDirectory: true)
+    }
 
     let herdrPath: String
     let configPath: String
@@ -11,8 +19,7 @@ struct HerdrSession {
 
     static func make() -> HerdrSession? {
         guard let herdr = locateHerdr() else { return nil }
-        let support = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Herd", isDirectory: true)
+        let support = supportDirectory
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         let config = support.appendingPathComponent("herdr-config.toml").path
         return HerdrSession(

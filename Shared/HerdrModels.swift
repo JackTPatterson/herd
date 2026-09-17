@@ -71,13 +71,14 @@ struct HerdrPane: Codable, Equatable, Identifiable {
     let foregroundCwd: String?
     let agentStatus: HerdrAgentStatus
     let terminalTitle: String?
+    var terminalId: String? = nil
 
     var id: String { paneId }
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id", tabId = "tab_id", workspaceId = "workspace_id", focused, cwd
         case foregroundCwd = "foreground_cwd", agentStatus = "agent_status"
-        case terminalTitle = "terminal_title_stripped"
+        case terminalTitle = "terminal_title_stripped", terminalId = "terminal_id"
     }
 }
 
@@ -91,13 +92,25 @@ struct HerdrAgent: Codable, Equatable, Identifiable {
     let agentStatus: HerdrAgentStatus
     var stateChangeSeq: Int? = nil
     var cwd: String? = nil
+    var terminalId: String? = nil
+    /// Native session reference reported by an official herdr integration.
+    var agentSession: SessionReference? = nil
+
+    struct SessionReference: Codable, Equatable {
+        let source: String?
+        let agent: String?
+        let kind: String?
+        let value: String?
+    }
+
+    var sessionReference: String? { agentSession?.value }
 
     var id: String { paneId }
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id", tabId = "tab_id", workspaceId = "workspace_id"
         case agent, name, displayAgent = "display_agent", agentStatus = "agent_status"
-        case stateChangeSeq = "state_change_seq", cwd
+        case stateChangeSeq = "state_change_seq", cwd, terminalId = "terminal_id", agentSession = "agent_session"
     }
 }
 

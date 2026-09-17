@@ -340,3 +340,98 @@ final class WorkspaceActivityTests: XCTestCase {
         XCTAssertEqual(date.map { Int($0.timeIntervalSince1970) }, 1789657021)
     }
 }
+
+final class AgentRecoveryTests: XCTestCase {
+    private func snapshot(agents: [HerdrAgent], terminals: [String]) -> HerdrSnapshot {
+        let panes = terminals.enumerated().map { index, terminal in
+            HerdrPane(paneId: "w1:p\(index)", tabId: "w1:t1", workspaceId: "w1", focused: false, cwd: "/repo",
+                      foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil, terminalId: terminal)
+        }
+        return HerdrSnapshot(
+            workspaces: [HerdrWorkspace(workspaceId: "w1", number: 1, label: "repo", focused: true, paneCount: 1,
+                                        tabCount: 1, activeTabId: "w1:t1", agentStatus: .idle, worktree: nil)],
+            tabs: [HerdrTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: "claude", focused: true, paneCount: 1, agentStatus: .idle)],
+            panes: panes, agents: agents, focusedWorkspaceId: "w1", focusedTabId: "w1:t1", focusedPaneId: nil
+        )
+    }
+
+    private func agent(_ kind: String, terminal: String, session: String? = nil) -> HerdrAgent {
+        HerdrAgent(paneId: "w1:p0", tabId: "w1:t1", workspaceId: "w1", agent: kind, name: nil, displayAgent: nil,
+                   agentStatus: .idle, cwd: "/repo", terminalId: terminal,
+                   agentSession: session.map { HerdrAgent.SessionReference(source: nil, agent: kind, kind: "id", value: $0) })
+    }
+
+    func testSessionsRunningAtLastObservationAreLostAfterRestart() {
+        let seenAt = Date(timeIntervalSince1970: 1_000)
+        let before = snapshot(agents: [agent("claude", terminal: "term_a"), agent("codex", terminal: "term_b")],
+                              terminals: ["term_a", "term_b"])
+        var journal = AgentRecovery.record(before, into: [], now: seenAt) { agent, _ in agent.agent == "claude" ? "sess-1" : "cdx-2" }
+        XCTAssertEqual(journal.first { $0.agent == "codex" }?.resumeCommand, "codex resume cdx-2")
+        XCTAssertEqual(journal.first { $0.agent == "claude" }?.workspaceLabel, "repo")
+
+        // Codex exited earlier while Herd watched: not offered.
+        journal = AgentRecovery.record(snapshot(agents: [agent("claude", terminal: "term_a")], terminals: ["term_a", "term_b"]),
+                                       into: journal, now: seenAt.addingTimeInterval(60)) { _, _ in nil }
+        let after = snapshot(agents: [], terminals: ["term_new"])
+        let lost = AgentRecovery.lostSessions(journal: journal, lastObserved: seenAt.addingTimeInterval(60), current: after)
+        XCTAssertEqual(lost.map(\.agent), ["claude"])
+        XCTAssertEqual(lost.first?.resumeCommand, "claude --resume sess-1")
+        XCTAssertEqual(Set(AgentRecovery.history(journal: journal, current: after).map(\.agent)), ["claude", "codex"])
+    }
+
+    func testNativelyResumedAndHandledSessionsAreNotLost() {
+        let now = Date()
+        var journal = AgentRecovery.record(snapshot(agents: [agent("claude", terminal: "term_a")], terminals: ["term_a"]),
+                                           into: [], now: now) { _, _ in "sess-1" }
+        let resumed = snapshot(agents: [agent("claude", terminal: "term_z", session: "sess-1")], terminals: ["term_z"])
+        XCTAssertTrue(AgentRecovery.lostSessions(journal: journal, lastObserved: now, current: resumed).isEmpty)
+
+        journal[0].handled = true
+        XCTAssertTrue(AgentRecovery.lostSessions(journal: journal, lastObserved: now,
+                                                 current: snapshot(agents: [], terminals: ["x"])).isEmpty)
+    }
+
+    func testCodexSessionMetaParsingAndJournalRoundTrip() throws {
+        let line = #"{"type":"session_meta","payload":{"id":"019e3e63-ed09","cwd":"/Users/me/app","timestamp":"x"}}"#
+        XCTAssertEqual(AgentSessionFiles.parseCodexSessionMeta(firstLine: line)?.id, "019e3e63-ed09")
+        XCTAssertNil(AgentSessionFiles.parseCodexSessionMeta(firstLine: #"{"type":"message"}"#))
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/journal.json")
+        let record = AgentSessionRecord(agent: "claude", sessionId: "it's", cwd: "/r", workspaceLabel: "r", tabLabel: "t",
+                                        terminalId: "term", firstSeen: Date(timeIntervalSince1970: 5), lastSeen: Date(timeIntervalSince1970: 9))
+        AgentSessionJournal(lastObserved: Date(timeIntervalSince1970: 9), records: [record]).save(to: url)
+        XCTAssertEqual(AgentSessionJournal.load(from: url).records, [record])
+        XCTAssertEqual(record.resumeCommand, "claude --resume 'it'\"'\"'s'")
+    }
+
+    func testResumeRequestRunsTheCommandInALoginShell() {
+        let record = AgentSessionRecord(agent: "codex", sessionId: "abc", cwd: "/work/app", workspaceLabel: "app",
+                                        tabLabel: "review", terminalId: "t", firstSeen: Date(), lastSeen: Date())
+        let request = AgentRecovery.resumeRequest(record, shell: "/bin/zsh", workspaceId: "w2", tabId: nil)
+        XCTAssertEqual(request["workspace_id"] as? String, "w2")
+        XCTAssertEqual(request["tab_label"] as? String, "review")
+        XCTAssertEqual(request["focus"] as? Bool, false)
+        let pane = request["root"] as? [String: Any]
+        XCTAssertEqual(pane?["cwd"] as? String, "/work/app")
+        XCTAssertEqual(pane?["command"] as? [String], ["/bin/zsh", "-lic", "codex resume abc; exec /bin/zsh -l"])
+
+        // A new workspace's empty first tab is filled instead of adding one.
+        let intoTab = AgentRecovery.resumeRequest(record, shell: "/bin/zsh", workspaceId: "w3", tabId: "w3:t1")
+        XCTAssertEqual(intoTab["tab_id"] as? String, "w3:t1")
+        XCTAssertNil(intoTab["tab_label"])
+    }
+
+    func testClaudeSessionInferenceSkipsClaimedAndStaleTranscripts() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        let dir = ClaudeTranscriptActivity.projectDirectory(forCwd: "/work/app", home: home)
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let started = Date()
+        for (name, age) in [("old", -3600.0), ("a", -5.0), ("b", -1.0)] {
+            FileManager.default.createFile(atPath: "\(dir)/\(name).jsonl", contents: Data("{}\n".utf8),
+                                           attributes: [.modificationDate: started.addingTimeInterval(age)])
+        }
+        XCTAssertEqual(AgentSessionFiles.claudeSession(cwd: "/work/app", since: started, home: home), "b")
+        XCTAssertEqual(AgentSessionFiles.claudeSession(cwd: "/work/app", since: started, excluding: ["b"], home: home), "a")
+        XCTAssertNil(AgentSessionFiles.claudeSession(cwd: "/work/app", since: started, excluding: ["a", "b"], home: home))
+    }
+}
