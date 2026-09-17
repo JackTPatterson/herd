@@ -335,7 +335,7 @@ private struct AgentSettings: View {
             SettingsRow(title: "When an agent finishes or needs you") {
                 Picker("", selection: $settings.values.notifications) {
                     Text("macOS notification").tag(HerdSettings.NotificationDelivery.system)
-                    Text("In terminal").tag(HerdSettings.NotificationDelivery.herdr)
+                    Text("In Herd").tag(HerdSettings.NotificationDelivery.banner)
                     Text("Off").tag(HerdSettings.NotificationDelivery.off)
                 }
                 .labelsHidden().frame(width: 190)

@@ -179,6 +179,7 @@ final class HerdrStore: ObservableObject {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
+        notifyAgentActivity(in: snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
@@ -199,6 +200,31 @@ final class HerdrStore: ObservableObject {
         return branches
     }
 
+    // MARK: - Agent notices
+
+    private var activityWatcher = AgentActivityWatcher()
+
+    /// Raises a banner when an agent stops working, unless you are already
+    /// looking at that pane.
+    private func notifyAgentActivity(in snapshot: HerdrSnapshot) {
+        let focusedTab = displayedFocusedTabId ?? snapshot.focusedTabId
+        let appActive = NSApp?.isActive == true
+        let events = activityWatcher.events(in: snapshot) { agent in
+            appActive && agent.tabId == focusedTab
+        }
+        guard !events.isEmpty else { return }
+        AgentBannerCenter.shared.show(events)
+    }
+
+    /// Jumps to the pane a banner came from.
+    func focus(_ event: AgentEvent) {
+        if let tab = snapshot.tabs.first(where: { $0.tabId == event.tabId }) {
+            focusTabAnywhere(tab)
+        }
+        focusAgent(paneId: event.paneId)
+        HerdTerminalRuntime.focusTerminal()
+    }
+
     // MARK: - Tips
 
     /// The tip shown at the foot of the sidebar, if any.
@@ -216,6 +242,13 @@ final class HerdrStore: ObservableObject {
         if let currentTip, currentTip.applies(context) { return }
         currentTip = Tips.next(seen: seenTips, context: context)
         markTipSeen()
+    }
+
+    /// `3/12`, so it reads as something to page through.
+    var tipPosition: String {
+        let relevant = Tips.all.filter { $0.applies(tipContext()) }
+        guard let currentTip, let index = relevant.firstIndex(of: currentTip) else { return "" }
+        return "\(index + 1)/\(relevant.count)"
     }
 
     /// Steps to another tip on click.

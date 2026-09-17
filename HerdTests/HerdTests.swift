@@ -907,3 +907,61 @@ final class AgentEnvironmentTests: XCTestCase {
         XCTAssertTrue(AgentEnvironment.markers(in: ["PATH": "/bin"]).isEmpty)
     }
 }
+
+final class AgentActivityTests: XCTestCase {
+    private func snapshot(_ statuses: [(pane: String, status: HerdrAgentStatus)], tabLabel: String = "refactor") -> HerdrSnapshot {
+        let agents = statuses.enumerated().map { index, entry in
+            HerdrAgent(paneId: entry.pane, tabId: "w1:t\(index + 1)", workspaceId: "w1", agent: "claude", name: nil,
+                       displayAgent: nil, agentStatus: entry.status, stateChangeSeq: index, cwd: "/repo",
+                       terminalId: "term-\(entry.pane)")
+        }
+        let tabs = agents.enumerated().map { index, agent in
+            HerdrTab(tabId: agent.tabId!, workspaceId: "w1", number: index + 1, label: tabLabel, focused: index == 0,
+                     paneCount: 1, agentStatus: agent.agentStatus)
+        }
+        return HerdrSnapshot(
+            workspaces: [HerdrWorkspace(workspaceId: "w1", number: 1, label: "repo", focused: true, paneCount: agents.count,
+                                        tabCount: tabs.count, activeTabId: tabs.first?.tabId ?? "w1:t1", agentStatus: .idle, worktree: nil)],
+            tabs: tabs, panes: [], agents: agents,
+            focusedWorkspaceId: "w1", focusedTabId: tabs.first?.tabId, focusedPaneId: nil
+        )
+    }
+
+    func testFinishingAndBlockingRaiseNoticesButRoutineChangesDont() {
+        var watcher = AgentActivityWatcher()
+        let start = Date()
+        // The first snapshot only records state: no notice for what was
+        // already running when Herd opened.
+        XCTAssertTrue(watcher.events(in: snapshot([("p1", .idle)]), now: start).isEmpty)
+        XCTAssertTrue(watcher.events(in: snapshot([("p1", .working)]), now: start + 1).isEmpty)
+
+        let finished = watcher.events(in: snapshot([("p1", .done)]), now: start + 61)
+        XCTAssertEqual(finished.map(\.kind), [.finished])
+        XCTAssertEqual(finished.first?.label, "refactor")
+        XCTAssertEqual(AgentActivityWatcher.durationLabel(finished.first?.workedFor), "1m")
+
+        // done → idle is the agent settling, not a second finish.
+        XCTAssertTrue(watcher.events(in: snapshot([("p1", .idle)]), now: start + 62).isEmpty)
+        let blocked = watcher.events(in: snapshot([("p1", .blocked)]), now: start + 63)
+        XCTAssertEqual(blocked.map(\.kind), [.needsInput])
+    }
+
+    func testWorkYouAreWatchingDoesNotInterrupt() {
+        var watcher = AgentActivityWatcher()
+        let start = Date()
+        _ = watcher.events(in: snapshot([("p1", .working)]), now: start)
+        let hidden = watcher.events(in: snapshot([("p1", .done)]), now: start + 5) { _ in true }
+        XCTAssertTrue(hidden.isEmpty)
+    }
+
+    func testUnnamedTabsFallBackToTheAgentName() {
+        var watcher = AgentActivityWatcher()
+        let start = Date()
+        _ = watcher.events(in: snapshot([("p1", .working)], tabLabel: "3"), now: start)
+        let events = watcher.events(in: snapshot([("p1", .done)], tabLabel: "3"), now: start + 2)
+        XCTAssertEqual(events.first?.label, "Claude Code")
+        XCTAssertNil(AgentActivityWatcher.durationLabel(0.4))
+        XCTAssertEqual(AgentActivityWatcher.durationLabel(3_600), "1h")
+        XCTAssertEqual(AgentActivityWatcher.durationLabel(3_725), "1h 2m")
+    }
+}

@@ -34,6 +34,12 @@ struct RootView: View {
                 }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            AgentBannerStack(center: AgentBannerCenter.shared) { event in
+                store.focus(event)
+            }
+            .padding(.top, Theme.titleBarHeight + Theme.tabBarHeight)
+        }
         .overlay(alignment: .bottomTrailing) {
             // Toasts sit above the recovery panel, both anchored bottom-right.
             VStack(alignment: .trailing, spacing: 8) {
@@ -59,6 +65,16 @@ struct RootView: View {
                        let command = slash.commands.first(where: { $0.name == name }) {
                         slash.descend(command)
                     }
+                }
+            }
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "banner" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    AgentBannerCenter.shared.show([
+                        AgentEvent(id: "sample-1", kind: .finished, agent: "claude", paneId: "w1:p1", tabId: "w1:t1",
+                                   workspaceId: "w1", label: "migrate schema", workedFor: 134, at: Date()),
+                        AgentEvent(id: "sample-2", kind: .needsInput, agent: "codex", paneId: "w1:p2", tabId: "w1:t2",
+                                   workspaceId: "w1", label: "review auth flow", workedFor: 22, at: Date()),
+                    ])
                 }
             }
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "confirm" {

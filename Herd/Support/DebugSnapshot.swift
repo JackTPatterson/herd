@@ -17,7 +17,7 @@ enum DebugSnapshot {
     /// would erase them from the capture.
     @MainActor
     static var overlaysOnTop: Bool {
-        overlayVisible || !ToastCenter.shared.visibleToasts.isEmpty
+        overlayVisible || !ToastCenter.shared.visibleToasts.isEmpty || !AgentBannerCenter.shared.banners.isEmpty
     }
     static func start() {
         // Encoding window PNGs is main-thread heavy: debug builds only.

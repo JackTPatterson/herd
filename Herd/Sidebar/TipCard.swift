@@ -29,10 +29,17 @@ struct TipCard: View {
                             .padding(.vertical, 1)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Theme.hover))
                     }
+                    if hovered {
+                        Text(store.tipPosition)
+                            .font(Theme.captionFont)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
                     Button { store.dismissTips() } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(Theme.textTertiary)
+                            .frame(width: 14, height: 14)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .opacity(hovered ? 1 : 0)
@@ -53,7 +60,7 @@ struct TipCard: View {
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
             .onTapGesture { store.nextTip() }
-            .help("Click for another tip")
+            .help("Click for the next tip")
             .transition(motion.animates(.sidebar) ? .opacity.combined(with: .move(edge: .bottom)) : .identity)
             .animation(motion.animation(.sidebar, .smooth(duration: 0.2)), value: tip.id)
         }

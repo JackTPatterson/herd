@@ -158,6 +158,16 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Agent notices
+
+When an agent stops working — it finished, or it is waiting on you — Herd
+slides a notice into the window's top right, tinted with that agent's colour
+and naming the tab, how long it worked, and which agent it was. Click one to
+jump to that pane; they stack up to three and fade after eight seconds. Work
+you are already watching never interrupts you: a notice is skipped when Herd
+is active and that tab is on screen. Settings → Agents & Recovery switches
+between Herd's notices, system notifications, and none.
+
 ## Clipboard
 
 Copying looks identical whether or not it worked, so Herd confirms it in its

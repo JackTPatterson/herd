@@ -39,7 +39,7 @@ struct HerdSettings: Codable, Equatable {
     var kittyGraphics = true
 
     // MARK: Agents & recovery (herdr + Herd)
-    var notifications: NotificationDelivery = .system
+    var notifications: NotificationDelivery = .banner
     var notificationDelaySeconds: Double = 1
     var agentSounds = true
     var resumeAgentsOnRestore = true
@@ -65,8 +65,25 @@ struct HerdSettings: Codable, Equatable {
     enum PaneBorders: String, Codable, CaseIterable { case auto, always, off }
     enum OptionAsAlt: String, Codable, CaseIterable { case off, left, right, both }
     enum ClipboardAccess: String, Codable, CaseIterable { case ask, allow, deny }
-    enum NotificationDelivery: String, Codable, CaseIterable { case off, system, herdr }
+    enum NotificationDelivery: String, Codable, CaseIterable {
+        case off
+        case system
+        /// Herd's own banner in the window's top right.
+        case banner = "herdr"
+
+        var title: String {
+            switch self {
+            case .off: "Off"
+            case .system: "System notifications"
+            case .banner: "In Herd"
+            }
+        }
+    }
     enum UpdateChannel: String, Codable, CaseIterable { case stable, preview }
+
+    /// Bumped when a stored value needs reinterpreting; see `init(from:)`.
+    static let currentVersion = 2
+    var version = currentVersion
 
     init() {}
 
@@ -106,6 +123,13 @@ struct HerdSettings: Codable, Equatable {
         clipboardRead = value("clipboardRead", defaults.clipboardRead)
         kittyGraphics = value("kittyGraphics", defaults.kittyGraphics)
         notifications = value("notifications", defaults.notifications)
+        version = value("version", 1)
+        if version < 2 {
+            // "system" used to be the default, before Herd drew its own
+            // agent banners; move that default on, keep a deliberate "off".
+            if notifications == .system { notifications = .banner }
+            version = Self.currentVersion
+        }
         notificationDelaySeconds = value("notificationDelaySeconds", defaults.notificationDelaySeconds)
         agentSounds = value("agentSounds", defaults.agentSounds)
         resumeAgentsOnRestore = value("resumeAgentsOnRestore", defaults.resumeAgentsOnRestore)
@@ -212,7 +236,8 @@ struct HerdSettings: Codable, Equatable {
         accent = "#\(theme.accent)"
 
         [ui.toast]
-        delivery = "\(notifications.rawValue)"
+        # Herd draws agent notices itself unless the system is doing it.
+        delivery = "\(notifications == .system ? "system" : "off")"
         delay_seconds = \(Int(notificationDelaySeconds))
 
         # Herd shows its own clipboard toast; only one of the two should.
