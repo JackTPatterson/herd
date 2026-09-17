@@ -965,3 +965,43 @@ final class AgentActivityTests: XCTestCase {
         XCTAssertEqual(AgentActivityWatcher.durationLabel(3_725), "1h 2m")
     }
 }
+
+final class BranchRunTests: XCTestCase {
+    private func workspace(_ id: String, worktree: HerdrWorktree? = nil) -> HerdrWorkspace {
+        HerdrWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
+                       activeTabId: "\(id):t1", agentStatus: .idle, worktree: worktree)
+    }
+
+    func testWorkspacesOnOneBranchShareARun() {
+        let branches = ["w1": "main", "w2": "main", "w3": "feature/auth"]
+        let runs = BranchRuns.make([workspace("w1"), workspace("w2"), workspace("w3")],
+                                   branch: { branches[$0.workspaceId] }, worktree: { $0.worktree })
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs[0].workspaces.map(\.workspaceId), ["w1", "w2"])
+        XCTAssertEqual(runs[0].branch, "main")
+        XCTAssertEqual(runs[1].branch, "feature/auth")
+        XCTAssertFalse(runs[0].isBare)
+    }
+
+    func testWorktreesSplitARunAndNameThemselves() {
+        let tree = HerdrWorktree(repoRoot: "/repo", branch: "release/2.0", path: "/repo/.worktrees/release-2")
+        let runs = BranchRuns.make([workspace("w1"), workspace("w2", worktree: tree), workspace("w3")],
+                                   branch: { $0.workspaceId == "w2" ? "release/2.0" : "main" },
+                                   worktree: { $0.worktree })
+        XCTAssertEqual(runs.map { $0.workspaces.map(\.workspaceId) }, [["w1"], ["w2"], ["w3"]])
+        XCTAssertEqual(runs[1].worktreeName, "release-2")
+        // Same branch either side of the worktree stays in separate runs.
+        XCTAssertEqual(runs[0].key, runs[2].key)
+        XCTAssertNotEqual(runs[0].id, runs[2].id)
+    }
+
+    func testAWorkspaceWithNoBranchGetsNoChip() {
+        let runs = BranchRuns.make([workspace("w1")], branch: { _ in nil }, worktree: { _ in nil })
+        XCTAssertTrue(runs[0].isBare)
+        // A worktree alone is still worth labelling.
+        let tree = HerdrWorktree(repoRoot: nil, branch: nil, path: "/repo/.worktrees/spike")
+        let worktreeRuns = BranchRuns.make([workspace("w2", worktree: tree)], branch: { _ in nil }, worktree: { $0.worktree })
+        XCTAssertFalse(worktreeRuns[0].isBare)
+        XCTAssertEqual(worktreeRuns[0].worktreeName, "spike")
+    }
+}

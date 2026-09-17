@@ -158,6 +158,13 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Branches in the sidebar
+
+A workspace card shows the space and what is running in it; the branch sits
+in its own small chip below. Spaces that share a branch — or a worktree —
+stack together under one chip rather than repeating it, with a count when
+there are several.
+
 ## Agent notices
 
 When an agent stops working — it finished, or it is waiting on you — Herd

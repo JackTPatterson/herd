@@ -78,15 +78,67 @@ struct SidebarView: View {
             .padding(.vertical, 4)
 
             if !collapsed {
-                ForEach(group.workspaces) { workspace in
-                    WorkspaceCard(store: store, workspace: workspace)
-                        .padding(.horizontal, 8)
-                        .transition(motion.animates(.sidebar)
-                            ? .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)
-                            : .identity)
+                // Workspaces on the same branch stack together under one chip.
+                ForEach(BranchRuns.make(group.workspaces, branch: { store.branches[$0.workspaceId] },
+                                        worktree: { $0.worktree })) { run in
+                    VStack(spacing: 2) {
+                        ForEach(run.workspaces) { workspace in
+                            WorkspaceCard(store: store, workspace: workspace)
+                        }
+                        if !run.isBare {
+                            BranchChip(run: run)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .transition(motion.animates(.sidebar)
+                        ? .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)
+                        : .identity)
                 }
             }
         }
+    }
+}
+
+/// The branch (and worktree) a run of workspaces shares, as a small card
+/// tucked under them.
+private struct BranchChip: View {
+    let run: BranchRun
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: run.worktreePath == nil ? "arrow.triangle.branch" : "square.stack.3d.up")
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.textTertiary)
+            if let branch = run.branch {
+                Text(branch)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let worktree = run.worktreeName {
+                Text(run.branch == nil ? worktree : "worktree \(worktree)")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if run.workspaces.count > 1 {
+                Text("\(run.workspaces.count)")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .help("\(run.workspaces.count) spaces on this branch")
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(hovered ? Theme.hover : Theme.card.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border.opacity(0.5), lineWidth: 1))
+        .onHover { hovered = $0 }
+        .help(run.worktreePath.map { "Worktree at \($0)" } ?? "Branch \(run.branch ?? "")")
     }
 }
 
@@ -102,7 +154,6 @@ private struct WorkspaceCard: View {
         let agent = store.primaryAgent(in: agents)
         let brand = AgentBrand.forAgent(agent?.agent)
         let directory = snapshot.directory(ofWorkspace: workspace.workspaceId)
-        let branch = store.branches[workspace.workspaceId]
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -117,16 +168,6 @@ private struct WorkspaceCard: View {
                         .font(.system(size: 8))
                         .foregroundStyle(Theme.textTertiary)
                         .help("Pinned: never moves to Idle")
-                }
-                if let branch {
-                    Text("•").foregroundStyle(Theme.textTertiary)
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text(branch)
-                        .font(Theme.uiFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
