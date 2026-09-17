@@ -13,6 +13,10 @@ enum DebugSnapshot {
     /// isn't composited over it.
     static var overlayVisible = false
     static func start() {
+        // Encoding window PNGs is main-thread heavy: debug builds only.
+        #if !DEBUG
+        return
+        #endif
         guard let dir = ProcessInfo.processInfo.environment["HERD_SNAPSHOT_DIR"] else { return }
         let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated { dump(to: dir) }

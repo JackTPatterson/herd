@@ -113,11 +113,13 @@ final class HerdrStore: ObservableObject {
         let client = self.client
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try client.snapshot() }
+            // Disk reads stay off the main thread.
+            let branches = (try? result.get()).map(Self.readBranches)
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success(let snapshot):
-                    self.apply(snapshot)
+                    self.apply(snapshot, branches: branches ?? [:])
                 case .failure(let error):
                     self.lastError = String(describing: error)
                 }
@@ -125,11 +127,17 @@ final class HerdrStore: ObservableObject {
         }
     }
 
-    func apply(_ snapshot: HerdrSnapshot) {
+    func apply(_ snapshot: HerdrSnapshot, branches: [String: String]) {
         observeActivity(snapshot)
+        if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot
-        groups = ProjectGrouping.groups(snapshot: snapshot, resolveRoot: resolver.root(for:))
+        let groups = ProjectGrouping.groups(snapshot: snapshot, resolveRoot: resolver.root(for:))
+        if groups != self.groups { self.groups = groups }
+        repartition()
+    }
+
+    private nonisolated static func readBranches(_ snapshot: HerdrSnapshot) -> [String: String] {
         var branches: [String: String] = [:]
         for workspace in snapshot.workspaces {
             if let directory = snapshot.directory(ofWorkspace: workspace.workspaceId),
@@ -137,8 +145,7 @@ final class HerdrStore: ObservableObject {
                 branches[workspace.workspaceId] = branch
             }
         }
-        if branches != self.branches { self.branches = branches }
-        repartition()
+        return branches
     }
 
     // MARK: - Idle organization
