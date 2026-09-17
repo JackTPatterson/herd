@@ -76,12 +76,12 @@ enum PaletteCatalog {
             action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { store.focusPane(.up) },
             action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { store.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
-            action("reloadConfig", "Reload herdr Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadHerdrConfig() },
+            action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadHerdrConfig() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent", "setup"]) { SubagentHookMenu.install() },
             action("removeHook", "Remove Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent"]) { SubagentHookMenu.uninstall() },
-            action("revealConfig", "Reveal herdr Config in Finder", "doc.text.magnifyingglass") {
+            action("revealConfig", "Reveal Terminal Config in Finder", "doc.text.magnifyingglass") {
                 if let path = HerdrSession.make()?.configPath {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                 }
@@ -332,7 +332,7 @@ enum PaletteCatalog {
         ))
         items.append(PaletteItem(
             id: "plugin.marketplace", kind: .plugin, title: "Browse Plugin Marketplace",
-            subtitle: "herdr.dev/plugins", keywords: ["discover"],
+            subtitle: "Browse the plugin directory", keywords: ["discover"],
             icon: .symbol("safari"),
             effect: .run { NSWorkspace.shared.open(URL(string: "https://herdr.dev/plugins/")!) }
         ))
@@ -433,7 +433,7 @@ enum PluginDialogs {
         let name = PluginCLI.previewField("name", in: preview) ?? "this plugin"
         ConfirmCenter.shared.ask(ConfirmCenter.Request(
             title: "Install \(name)?",
-            message: "Plugins run as your user and are not sandboxed. Review the commands herdr will run:",
+            message: "Plugins run as your user and are not sandboxed. Review the commands they will run:",
             detail: preview,
             confirmTitle: "Install",
             onConfirm: { _ in answer(true) },
@@ -444,7 +444,7 @@ enum PluginDialogs {
     static func confirmUninstall(name: String, answer: @escaping (Bool) -> Void) {
         ConfirmCenter.shared.ask(ConfirmCenter.Request(
             title: "Uninstall \(name)?",
-            message: "herdr removes the plugin's files. Its config directory is kept.",
+            message: "The plugin's files are removed. Its config directory is kept.",
             confirmTitle: "Uninstall",
             destructive: true,
             onConfirm: { _ in answer(true) },

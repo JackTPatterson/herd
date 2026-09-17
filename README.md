@@ -6,6 +6,15 @@ draws Warp-style native chrome (project sidebar, top tabs, agent state and
 vendor hues). Claude Code subagents open as named background tabs showing
 their live transcript. Design and scope: [docs/PLAN.md](docs/PLAN.md).
 
+## Naming
+
+Herd never shows the engine's name in its own UI: the title bar reads
+`ready`, toasts and settings talk about "the terminal", and Herd's generated
+config is `~/Library/Application Support/Herd/terminal.toml`. The engine is
+still named where naming it is the point — the install command on the
+missing-engine screen, its executable paths, its socket, and the attribution
+below.
+
 ## Requirements
 
 - macOS 14+, Xcode 26/27, `xcodegen` (`brew install xcodegen`)

@@ -50,7 +50,9 @@ struct HerdSettings: Codable, Equatable {
     var autoNameTabs = true
 
     // MARK: Advanced (herdr)
-    var worktreesDirectory = "~/.herdr/worktrees"
+    var worktreesDirectory = "~/.herd/worktrees"
+    /// Where the engine used to put worktrees; kept when it holds any.
+    static let legacyWorktreesDirectory = "~/.herdr/worktrees"
     var checkForHerdrUpdates = true
     var updateChannel: UpdateChannel = .stable
     var allowNestedHerdr = false
@@ -112,6 +114,11 @@ struct HerdSettings: Codable, Equatable {
         slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)
+        // Move off the old default unless worktrees already live there.
+        if worktreesDirectory == Self.legacyWorktreesDirectory,
+           !FileManager.default.fileExists(atPath: NSString(string: Self.legacyWorktreesDirectory).expandingTildeInPath) {
+            worktreesDirectory = defaults.worktreesDirectory
+        }
         checkForHerdrUpdates = value("checkForHerdrUpdates", defaults.checkForHerdrUpdates)
         updateChannel = value("updateChannel", defaults.updateChannel)
         allowNestedHerdr = value("allowNestedHerdr", defaults.allowNestedHerdr)

@@ -11,11 +11,11 @@ enum HerdrSocketError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .connectFailed(let path, let err):
-            return "cannot connect to herdr socket \(path): \(String(cString: strerror(err)))"
-        case .writeFailed: return "write to herdr socket failed"
-        case .closed: return "herdr socket closed"
-        case .server(let code, let message): return "herdr error \(code): \(message)"
-        case .malformedResponse(let line): return "malformed herdr response: \(line.prefix(200))"
+            return "cannot reach the terminal at \(path): \(String(cString: strerror(err)))"
+        case .writeFailed: return "write to the terminal failed"
+        case .closed: return "the terminal connection closed"
+        case .server(let code, let message): return "terminal error \(code): \(message)"
+        case .malformedResponse(let line): return "malformed terminal response: \(line.prefix(200))"
         }
     }
 }

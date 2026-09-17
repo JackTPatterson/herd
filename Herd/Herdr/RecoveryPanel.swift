@@ -21,7 +21,7 @@ struct RecoveryPanel: View {
                         .foregroundStyle(Theme.textPrimary)
                     Text(recovery.showingHistory
                          ? "Not running now. Resume any of them in its workspace."
-                         : "\(sessions.count) session\(sessions.count == 1 ? " was" : "s were") running when herdr stopped.")
+                         : "\(sessions.count) session\(sessions.count == 1 ? " was" : "s were") running when the terminal stopped.")
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textSecondary)
                 }

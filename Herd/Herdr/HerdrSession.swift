@@ -21,7 +21,9 @@ struct HerdrSession {
         guard let herdr = locateHerdr() else { return nil }
         let support = supportDirectory
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        let config = support.appendingPathComponent("herdr-config.toml").path
+        let config = support.appendingPathComponent("terminal.toml").path
+        // Herd wrote this under the engine's name in earlier versions.
+        try? FileManager.default.removeItem(at: support.appendingPathComponent("herdr-config.toml"))
         return HerdrSession(
             herdrPath: herdr,
             configPath: config,

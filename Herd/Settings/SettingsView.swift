@@ -98,7 +98,7 @@ private struct GeneralSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Startup & quitting") {
-            SettingsRow(title: "Confirm before quitting", detail: "Quitting Herd leaves terminals and agents running in herdr.") {
+            SettingsRow(title: "Confirm before quitting", detail: "Quitting Herd leaves terminals and agents running in the background.") {
                 Toggle("", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(.switch)
             }
         }
@@ -107,7 +107,7 @@ private struct GeneralSettings: View {
                 Picker("", selection: $settings.values.newPaneDirectory) {
                     Text("Focused pane's folder").tag(HerdSettings.NewPaneDirectory.follow)
                     Text("Home folder").tag(HerdSettings.NewPaneDirectory.home)
-                    Text("herdr's folder").tag(HerdSettings.NewPaneDirectory.current)
+                    Text("The terminal's folder").tag(HerdSettings.NewPaneDirectory.current)
                 }
                 .labelsHidden().frame(width: 190)
             }
@@ -347,7 +347,7 @@ private struct AgentSettings: View {
         SettingsGroup(title: "Recovery") {
             SettingsRow(
                 title: "Resume agents after a restart",
-                detail: "When herdr restarts (e.g. your Mac shut down), agents with an installed integration reopen their conversation."
+                detail: "When the terminal restarts (e.g. your Mac shut down), agents with an installed integration reopen their conversation."
             ) {
                 Toggle("", isOn: $settings.values.resumeAgentsOnRestore).labelsHidden().toggleStyle(.switch)
             }
@@ -387,7 +387,7 @@ private struct AgentSettings: View {
                 Toggle("", isOn: $settings.values.paneHistory).labelsHidden().toggleStyle(.switch)
             }
         }
-        SettingsGroup(title: "herdr integrations") {
+        SettingsGroup(title: "Agent integrations") {
             if integrations.statuses.isEmpty {
                 SettingsRow(title: integrations.loading ? "Checking…" : "Integrations unavailable") { EmptyView() }
             }
@@ -485,7 +485,7 @@ private struct KeyboardSettings: View {
         ("Tabs", [("New tab", "⌘T"), ("Close tab", "⌘W"), ("Tab 1–9", "⌘1…⌘9"), ("Next / previous tab", "⌘⇧] / ⌘⇧[")]),
         ("Workspaces", [("New workspace", "⌘N"), ("Open folder as workspace", "⌘O"), ("Next / previous workspace", "⌃⌘↓ / ⌃⌘↑")]),
         ("Panes", [("Split right", "⌘D"), ("Split down", "⌘⇧D"), ("Zoom pane", "⌘⇧↩"), ("Focus pane", "⌘⌥←↑→↓")]),
-        ("Terminal", [("Copy / paste", "⌘C / ⌘V"), ("herdr prefix", "⌃B")]),
+        ("Terminal", [("Copy / paste", "⌘C / ⌘V"), ("Terminal prefix", "⌃B")]),
     ]
 
     var body: some View {
@@ -507,12 +507,12 @@ private struct AdvancedSettings: View {
     var body: some View {
         SettingsGroup(title: "Worktrees") {
             SettingsRow(title: "Worktree folder", detail: "Where New Worktree creates <repo>/<branch> checkouts.") {
-                TextField("~/.herdr/worktrees", text: $settings.values.worktreesDirectory)
+                TextField("~/.herd/worktrees", text: $settings.values.worktreesDirectory)
                     .textFieldStyle(.roundedBorder).frame(width: 220)
             }
         }
-        SettingsGroup(title: "herdr") {
-            SettingsRow(title: "Check for herdr updates") {
+        SettingsGroup(title: "Terminal engine") {
+            SettingsRow(title: "Check for engine updates") {
                 Toggle("", isOn: $settings.values.checkForHerdrUpdates).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
@@ -524,11 +524,11 @@ private struct AdvancedSettings: View {
                 .pickerStyle(.segmented).labelsHidden().frame(width: 160)
             }
             SettingsDivider()
-            SettingsRow(title: "Allow herdr inside a pane", detail: "Lets you run herdr nested in a Herd pane.") {
+            SettingsRow(title: "Allow a nested session", detail: "Lets you run another terminal session inside a Herd pane.") {
                 Toggle("", isOn: $settings.values.allowNestedHerdr).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
-            SettingsRow(title: "Session", detail: "Herd runs its own herdr session, separate from herdr in other terminals.") {
+            SettingsRow(title: "Session", detail: "Herd runs its own session, separate from terminals you open elsewhere.") {
                 Text(HerdrSession.name).font(Theme.monoFont).foregroundStyle(Theme.textSecondary)
             }
             SettingsDivider()

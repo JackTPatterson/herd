@@ -58,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Herd's own dialog, so the answer arrives asynchronously.
         ConfirmCenter.shared.ask(ConfirmCenter.Request(
             title: "Quit Herd?",
-            message: "Your terminals and agents keep running in herdr. Reopen Herd to pick up where you left off.",
+            message: "Your terminals and agents keep running in the background. Reopen Herd to pick up where you left off.",
             confirmTitle: "Quit",
             suppressTitle: "Don't ask again",
             onConfirm: { suppress in

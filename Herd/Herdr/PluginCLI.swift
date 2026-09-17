@@ -129,5 +129,5 @@ enum PluginCLI {
 
 struct PluginCLIError: Error, CustomStringConvertible {
     let message: String
-    var description: String { message.isEmpty ? "herdr did not return an install preview" : message }
+    var description: String { message.isEmpty ? "No install preview was returned" : message }
 }

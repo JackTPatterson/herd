@@ -127,7 +127,7 @@ final class HerdrStore: ObservableObject {
                 Thread.sleep(forTimeInterval: 0.5)
             }
         }
-        thread.name = "herd.herdr-events"
+        thread.name = "herd.terminal-events"
         eventThread = thread
         thread.start()
         // Agent state changes are per-pane subscriptions in herdr; a light
@@ -543,10 +543,10 @@ final class HerdrStore: ObservableObject {
 
     func reloadHerdrConfig(quiet: Bool = false) {
         if quiet {
-            perform("server.reload_config", [:], failure: "Couldn't apply settings to herdr")
+            perform("server.reload_config", [:], failure: "Couldn't apply the settings")
         } else {
             perform("server.reload_config", [:], toast: ToastText(
-                progress: "Reloading herdr config…", success: "Reloaded herdr config", failure: "Couldn't reload herdr config"
+                progress: "Reloading the terminal config…", success: "Reloaded the terminal config", failure: "Couldn't reload the terminal config"
             ))
         }
     }

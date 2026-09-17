@@ -17,7 +17,7 @@ struct SidebarView: View {
                         groupSection(group)
                     }
                     if store.snapshot.workspaces.isEmpty {
-                        Text(store.isConnected ? "No workspaces" : "Starting herdr…")
+                        Text(store.isConnected ? "No workspaces" : "Starting the terminal…")
                             .font(Theme.uiFont)
                             .foregroundStyle(Theme.textTertiary)
                             .padding(.horizontal, 12)

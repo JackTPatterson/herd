@@ -65,7 +65,7 @@ struct RootView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     ConfirmCenter.shared.ask(
                         title: "Quit Herd?",
-                        message: "Your terminals and agents keep running in herdr. Reopen Herd to pick up where you left off.",
+                        message: "Your terminals and agents keep running in the background. Reopen Herd to pick up where you left off.",
                         confirmTitle: "Quit",
                         suppressTitle: "Don't ask again"
                     ) { _ in }
@@ -75,7 +75,7 @@ struct RootView: View {
         }
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }
-            ToastCenter.shared.fail(nil, "herdr request failed", detail: error)
+            ToastCenter.shared.fail(nil, "Terminal request failed", detail: error)
             store.lastError = nil
         }
         .overlay(alignment: .center) {
@@ -151,7 +151,7 @@ struct RootView: View {
                 .opacity(settings.values.backgroundOpacity))
         } else {
             VStack(spacing: 8) {
-                Text("herdr not found").font(.system(size: 14, weight: .semibold))
+                Text("Terminal engine missing").font(.system(size: 14, weight: .semibold))
                 Text("Install it with `brew install herdr`, then relaunch Herd.")
                     .font(Theme.uiFont)
                     .foregroundStyle(Theme.textSecondary)
@@ -247,7 +247,7 @@ private struct TitleBar: View {
             Circle()
                 .fill(store.isConnected ? Color(hex: AgentStateColor.done) : Theme.textTertiary)
                 .frame(width: 6, height: 6)
-            Text(store.isConnected ? "herdr" : "connecting")
+            Text(store.isConnected ? "ready" : "connecting")
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textTertiary)
         }
