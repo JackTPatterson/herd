@@ -5,3 +5,4 @@ DerivedData/
 .DS_Store
 Herd.xcodeproj/
 Vendor/herdr-radar/
+Spikes/TerminalSpike/*.xcodeproj/

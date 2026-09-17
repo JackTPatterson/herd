@@ -142,7 +142,9 @@ struct HerdrClient {
         "workspace.reordered", "workspace.closed", "workspace.focused",
         "tab.created", "tab.closed", "tab.focused", "tab.renamed", "tab.moved",
         "pane.created", "pane.updated", "pane.closed", "pane.focused", "pane.moved",
-        "pane.exited", "pane.agent_detected", "pane.agent_status_changed",
+        "pane.exited", "pane.agent_detected", "layout.updated",
+        // pane.agent_status_changed requires a pane_id; agent state is picked
+        // up by HerdrStore's periodic refresh instead.
     ]
 
     /// Opens a subscription and calls `onEvent` with each pushed event's type
@@ -152,13 +154,13 @@ struct HerdrClient {
         onEvent: (String) -> Void
     ) throws {
         let connection = try HerdrSocketConnection(path: socketPath)
-        connectionCreated(connection)
         try connection.send([
             "id": "herd-events",
             "method": "events.subscribe",
             "params": ["subscriptions": Self.subscribedEvents.map { ["type": $0] }],
         ])
         _ = try Self.parseResponse(try connection.readLine())
+        connectionCreated(connection)
         while true {
             let line = try connection.readLine()
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }

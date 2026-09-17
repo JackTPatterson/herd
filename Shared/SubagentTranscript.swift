@@ -95,7 +95,10 @@ final class SubagentTranscriptRenderer {
                     break
                 }
             }
-            if message["stop_reason"] as? String == "end_turn" {
+            // Claude splits one turn into several lines (thinking, text) that
+            // all carry end_turn; the turn is finished at the one with text.
+            let hasText = blocks.contains { $0["type"] as? String == "text" }
+            if message["stop_reason"] as? String == "end_turn", hasText {
                 print(color(32, bold("✓ Subagent finished")))
                 onFinished?()
             }

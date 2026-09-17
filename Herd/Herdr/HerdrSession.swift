@@ -22,6 +22,10 @@ struct HerdrSession {
         )
     }
 
+    /// herdr always draws one tab row at the top; Herd clips it and shows
+    /// native tabs instead.
+    static let hiddenTopRows = 1
+
     /// herdr config for the embedded client: Herd draws the sidebar and tab
     /// row natively, so herdr's own chrome is hidden.
     static let managedConfig = """
@@ -32,7 +36,8 @@ struct HerdrSession {
     [ui]
     sidebar_start_collapsed = true
     sidebar_collapsed_mode = "hidden"
-    hide_tab_bar_when_single_tab = true
+    hide_tab_bar_when_single_tab = false
+    tab_bar_position = "top"
     prompt_new_tab_name = false
     confirm_close = false
     pane_outer_borders = false

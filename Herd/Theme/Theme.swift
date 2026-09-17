@@ -41,7 +41,7 @@ enum Theme {
     selection-background = 2a4a5a
     font-size = 13
     window-padding-x = 10
-    window-padding-y = 6
+    window-padding-y = 0,6
     palette = 0=#616161
     palette = 1=#ff8272
     palette = 2=#b4fa72
@@ -58,7 +58,30 @@ enum Theme {
     palette = 13=#ffb1fe
     palette = 14=#e5e6fe
     palette = 15=#feffff
-    """
+    """ + "\n" + herdShortcutUnbinds
+
+    /// Shortcuts Herd's menus own; unbound in Ghostty so the surface lets them through.
+    static let herdShortcutUnbinds = [
+        "super+t",
+        "super+w",
+        "super+n",
+        "super+b",
+        "super+shift+left_bracket",
+        "super+shift+right_bracket",
+        "ctrl+super+up",
+        "ctrl+super+down",
+        "super+shift+w",
+        "super+shift+t",
+        "super+digit_1",
+        "super+digit_2",
+        "super+digit_3",
+        "super+digit_4",
+        "super+digit_5",
+        "super+digit_6",
+        "super+digit_7",
+        "super+digit_8",
+        "super+digit_9",
+    ].map { "keybind = \($0)=unbind" }.joined(separator: "\n")
 }
 
 extension Color {

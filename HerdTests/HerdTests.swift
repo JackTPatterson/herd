@@ -181,12 +181,15 @@ final class SubagentTranscriptTests: XCTestCase {
         XCTAssertNil(SubagentTranscriptLocator(directory: dir.path, toolUseId: "other", description: nil, since: 0).find())
     }
 
-    func testFinishedCallbackFiresOnEndTurn() {
+    func testFinishedCallbackFiresOnceOnTextEndTurn() {
         let renderer = SubagentTranscriptRenderer()
-        var finished = false
-        renderer.onFinished = { finished = true }
-        let line = #"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}"#
-        renderer.render(line: Data(line.utf8))
-        XCTAssertTrue(finished)
+        var finishedCount = 0
+        renderer.onFinished = { finishedCount += 1 }
+        let thinking = #"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":"…"}]}}"#
+        let text = #"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"4"}]}}"#
+        renderer.render(line: Data(thinking.utf8))
+        XCTAssertEqual(finishedCount, 0)
+        renderer.render(line: Data(text.utf8))
+        XCTAssertEqual(finishedCount, 1)
     }
 }

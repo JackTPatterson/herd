@@ -16,6 +16,7 @@ final class HerdrStore: ObservableObject {
     private let resolver = ProjectGrouping.CachedResolver()
     private var refreshScheduled = false
     private var eventThread: Thread?
+    private var pollTimer: Timer?
 
     init(client: HerdrClient) {
         self.client = client
@@ -55,6 +56,11 @@ final class HerdrStore: ObservableObject {
         thread.name = "herd.herdr-events"
         eventThread = thread
         thread.start()
+        // Agent state changes are per-pane subscriptions in herdr; a light
+        // periodic snapshot keeps state glyphs current.
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleRefresh() }
+        }
     }
 
     func scheduleRefresh() {

@@ -20,7 +20,10 @@ struct HerdApp: App {
         WindowGroup {
             RootView(store: store, ui: ui, session: session)
                 .frame(minWidth: 720, minHeight: 420)
-                .onAppear { store.start() }
+                .onAppear {
+                    store.start()
+                    DebugSnapshot.start()
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
@@ -46,6 +49,10 @@ struct HerdCommands: Commands {
             Button("Close Tab") { store.closeFocusedTab() }
                 .keyboardShortcut("w", modifiers: .command)
         }
+        CommandGroup(after: .appSettings) {
+            Button("Install Claude Subagent Tabs Hook") { ClaudeHookMenu.install() }
+            Button("Remove Claude Subagent Tabs Hook") { ClaudeHookMenu.uninstall() }
+        }
         CommandGroup(after: .sidebar) {
             Button("Toggle Sidebar") { ui.sidebarVisible.toggle() }
                 .keyboardShortcut("b", modifiers: .command)
@@ -66,5 +73,38 @@ struct HerdCommands: Commands {
                     .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
             }
         }
+    }
+}
+
+/// Menu actions for the Claude Code hook that opens subagent tabs.
+enum ClaudeHookMenu {
+    static func install() {
+        guard let cli = Bundle.main.url(forAuxiliaryExecutable: "herd-cli")?.path else {
+            return alert("herd-cli is missing from the app bundle.")
+        }
+        do {
+            let changed = try ClaudeHookInstaller.install(cliPath: cli)
+            alert(changed
+                ? "Installed. New Claude Code sessions inside Herd open a tab for each subagent."
+                : "The hook is already installed.")
+        } catch {
+            alert("Could not update ~/.claude/settings.json: \(error)")
+        }
+    }
+
+    static func uninstall() {
+        do {
+            let changed = try ClaudeHookInstaller.uninstall()
+            alert(changed ? "Removed the subagent tabs hook." : "The hook was not installed.")
+        } catch {
+            alert("Could not update ~/.claude/settings.json: \(error)")
+        }
+    }
+
+    private static func alert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Claude Subagent Tabs"
+        alert.informativeText = message
+        alert.runModal()
     }
 }

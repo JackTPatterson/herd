@@ -32,6 +32,7 @@ struct RootView: View {
                 command: session.command,
                 environment: session.environment,
                 workingDirectory: NSHomeDirectory(),
+                hiddenTopRows: HerdrSession.hiddenTopRows,
                 onTitleChange: { _ in },
                 onExit: { NSApp.terminate(nil) }
             )
