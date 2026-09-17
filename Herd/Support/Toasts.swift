@@ -143,10 +143,17 @@ private struct ToastCard: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .background(
+            LinearGradient(
+                stops: [
+                    .init(color: accent.opacity(0.28), location: 0),
+                    .init(color: accent.opacity(0), location: 0.5),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
         .background(Theme.card)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(accent).frame(width: 2)
-        }
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
