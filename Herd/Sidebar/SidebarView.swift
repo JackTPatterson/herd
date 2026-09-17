@@ -4,6 +4,7 @@ import SwiftUI
 /// bordered workspace cards tinted by the running agent's vendor hue.
 struct SidebarView: View {
     @ObservedObject var store: HerdrStore
+    @ObservedObject private var motion = MotionPreferences.shared
     @State private var collapsedGroups: Set<String> = []
 
     var body: some View {
@@ -12,10 +13,10 @@ struct SidebarView: View {
             Divider().overlay(Theme.divider)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(store.groups) { group in
+                    ForEach(store.activeGroups) { group in
                         groupSection(group)
                     }
-                    if store.groups.isEmpty {
+                    if store.snapshot.workspaces.isEmpty {
                         Text(store.isConnected ? "No workspaces" : "Starting herdr…")
                             .font(Theme.uiFont)
                             .foregroundStyle(Theme.textTertiary)
@@ -24,8 +25,14 @@ struct SidebarView: View {
                     }
                 }
                 .padding(.vertical, 8)
+                .animation(motion.animation(.sidebar), value: store.activeGroups)
+            }
+            if !store.idleWorkspaces.isEmpty {
+                IdleDock(store: store)
+                    .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
         }
+        .animation(motion.animation(.sidebar), value: store.idleWorkspaces.isEmpty)
         .frame(width: Theme.sidebarWidth)
         .background(Theme.sidebar)
     }
@@ -44,7 +51,9 @@ struct SidebarView: View {
         let collapsed = collapsedGroups.contains(group.id)
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                if collapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }
+                motion.perform(.sidebar) {
+                    if collapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }
+                }
             } label: {
                 HStack(spacing: 4) {
                     Text(group.name.uppercased())
@@ -56,9 +65,10 @@ struct SidebarView: View {
                     Text(group.workspaces.count == 1 ? "1 space" : "\(group.workspaces.count) spaces")
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
                 }
                 .contentShape(Rectangle())
             }
@@ -70,6 +80,9 @@ struct SidebarView: View {
                 ForEach(group.workspaces) { workspace in
                     WorkspaceCard(store: store, workspace: workspace)
                         .padding(.horizontal, 8)
+                        .transition(motion.animates(.sidebar)
+                            ? .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)
+                            : .identity)
                 }
             }
         }
@@ -98,6 +111,12 @@ private struct WorkspaceCard: View {
                     .font(Theme.uiFontMedium)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
+                if store.isPinned(workspace.workspaceId) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Theme.textTertiary)
+                        .help("Pinned: never moves to Idle")
+                }
                 if let branch {
                     Text("•").foregroundStyle(Theme.textTertiary)
                     Image(systemName: "arrow.triangle.branch")
@@ -147,7 +166,7 @@ private struct WorkspaceCard: View {
         .onHover { hovered = $0 }
         .onTapGesture { store.focusWorkspace(workspace.workspaceId) }
         .contextMenu {
-            Button("Close Workspace") { store.closeWorkspace(workspace.workspaceId) }
+            WorkspaceOrganizeMenu(store: store, workspace: workspace)
         }
     }
 
@@ -207,5 +226,168 @@ struct ControlButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
+    }
+}
+
+/// Context menu items shared by workspace cards and idle rows.
+struct WorkspaceOrganizeMenu: View {
+    @ObservedObject var store: HerdrStore
+    let workspace: HerdrWorkspace
+
+    var body: some View {
+        let id = workspace.workspaceId
+        if store.isPinned(id) {
+            Button("Unpin") { store.setPinned(id, false) }
+        } else {
+            Button("Pin to Keep in View") { store.setPinned(id, true) }
+        }
+        if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
+            Button("Keep in View Now") {
+                store.setPinned(id, false)
+                store.focusWorkspace(id)
+            }
+        } else {
+            Button("Move to Idle") { store.markIdle(id) }
+        }
+        Divider()
+        Button("Close Workspace") { store.closeWorkspace(id) }
+    }
+}
+
+/// Bottom dock of workspaces that haven't been used in a while: compact
+/// one-line rows so active work stays in view.
+struct IdleDock: View {
+    @ObservedObject var store: HerdrStore
+    @ObservedObject private var motion = MotionPreferences.shared
+    @AppStorage("herd.idleDock.collapsed") private var collapsed = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            HStack(spacing: 6) {
+                Button {
+                    motion.perform(.sidebar) { collapsed.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(collapsed ? -90 : 0))
+                        Text("IDLE").font(Theme.headerFont).kerning(0.4)
+                        Text("\(store.idleWorkspaces.count)")
+                            .font(Theme.uiFont)
+                            .foregroundStyle(Theme.textTertiary)
+                        Text("· unused \(IdleDock.thresholdLabel(store.idleAfter))+")
+                            .font(Theme.uiFont)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button {
+                    confirmCloseAll()
+                } label: {
+                    Image(systemName: "xmark.bin").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textTertiary)
+                .help("Close all idle workspaces")
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+
+            if !collapsed {
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        ForEach(store.idleWorkspaces) { workspace in
+                            IdleRow(store: store, workspace: workspace)
+                                .transition(motion.animates(.sidebar) ? .move(edge: .top).combined(with: .opacity) : .identity)
+                        }
+                    }
+                    .animation(motion.animation(.sidebar), value: store.idleWorkspaces)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 6)
+                }
+                .frame(height: min(CGFloat(store.idleWorkspaces.count) * 25 + 6, 200))
+                .transition(motion.animates(.sidebar) ? .opacity : .identity)
+            }
+        }
+        .background(Theme.chrome)
+    }
+
+    private func confirmCloseAll() {
+        let count = store.idleWorkspaces.count
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Close \(count) idle workspace\(count == 1 ? "" : "s")?"
+        alert.informativeText = "Their terminals and any processes running in them will end."
+        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            store.closeIdleWorkspaces()
+        }
+    }
+
+    static func thresholdLabel(_ seconds: TimeInterval) -> String {
+        seconds >= 86_400 ? "\(Int(seconds / 86_400))d"
+            : seconds >= 3600 ? "\(Int(seconds / 3600))h"
+            : "\(Int(seconds / 60))m"
+    }
+}
+
+private struct IdleRow: View {
+    @ObservedObject var store: HerdrStore
+    let workspace: HerdrWorkspace
+    @State private var hovered = false
+
+    var body: some View {
+        let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspace.workspaceId))
+        let brand = AgentBrand.forAgent(agent?.agent)
+        HStack(spacing: 6) {
+            Group {
+                if let brand {
+                    AgentLogo(brand: brand, size: 10).saturation(0.2).opacity(0.8)
+                } else {
+                    Image(systemName: "terminal").font(.system(size: 9))
+                }
+            }
+            .foregroundStyle(Theme.textTertiary)
+            .frame(width: 12)
+            Text(workspace.label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+                .lineLimit(1)
+            if let project = store.projectName(of: workspace.workspaceId),
+               project.caseInsensitiveCompare(workspace.label) != .orderedSame {
+                Text(project)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if hovered {
+                Button {
+                    store.closeWorkspace(workspace.workspaceId)
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textSecondary)
+                .help("Close workspace")
+            } else {
+                Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId)))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : Color.clear))
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture { store.focusWorkspace(workspace.workspaceId) }
+        .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) }
+        .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
     }
 }

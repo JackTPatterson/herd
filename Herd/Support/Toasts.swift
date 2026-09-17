@@ -100,15 +100,16 @@ final class ToastCenter: ObservableObject {
 /// Toast stack, bottom-right, Warp card styling.
 struct ToastStack: View {
     @ObservedObject var center: ToastCenter
+    @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
             ForEach(center.visibleToasts) { toast in
                 ToastCard(toast: toast) { center.dismiss(toast.id) }
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(motion.animates(.toasts) ? .move(edge: .trailing).combined(with: .opacity) : .identity)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: center.visibleToasts)
+        .animation(motion.animation(.toasts, .easeOut(duration: 0.18)), value: center.visibleToasts)
         .padding(16)
     }
 }

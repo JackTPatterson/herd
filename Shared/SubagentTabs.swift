@@ -130,6 +130,15 @@ enum ClaudeHookInstaller {
         command.hasSuffix(" hook claude") && command.contains("herd-cli")
     }
 
+    static func isInstalled() -> Bool {
+        guard let data = try? Data(contentsOf: settingsURL),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = (settings["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]] else { return false }
+        return entries.contains { entry in
+            (entry["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String).map(isHerdHookCommand) ?? false }
+        }
+    }
+
     static var settingsURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
     }

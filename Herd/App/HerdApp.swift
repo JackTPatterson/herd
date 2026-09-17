@@ -9,11 +9,15 @@ struct HerdApp: App {
 
     init() {
         let session = HerdrSession.make()
-        session?.writeManagedConfig()
+        let settings = SettingsStore.shared
+        settings.herdrConfigPath = session?.configPath
+        settings.writeHerdrConfig()
         self.session = session
         let socketPath = session?.socketPath ?? HerdrClient.socketPath(session: HerdrSession.name)
-        _store = StateObject(wrappedValue: HerdrStore(client: HerdrClient(socketPath: socketPath)))
-        HerdTerminalRuntime.configure(overrides: Theme.ghosttyConfig)
+        let store = HerdrStore(client: HerdrClient(socketPath: socketPath))
+        _store = StateObject(wrappedValue: store)
+        settings.reloadHerdr = { [weak store] in store?.reloadHerdrConfig(quiet: true) }
+        HerdTerminalRuntime.configure(overrides: settings.values.ghosttyConfig + "\n" + Theme.herdShortcutUnbinds)
     }
 
     var body: some Scene {
@@ -28,11 +32,30 @@ struct HerdApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
         .commands { HerdCommands(store: store, ui: ui) }
+
+        Settings {
+            SettingsView(store: store)
+        }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard SettingsStore.shared.values.confirmQuit else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Quit Herd?"
+        alert.informativeText = "Your terminals and agents keep running in herdr. Reopen Herd to pick up where you left off."
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        let suppress = NSButton(checkboxWithTitle: "Don't ask again", target: nil, action: nil)
+        alert.accessoryView = suppress
+        let quit = alert.runModal() == .alertFirstButtonReturn
+        if quit, suppress.state == .on { SettingsStore.shared.values.confirmQuit = false }
+        return quit ? .terminateNow : .terminateCancel
+    }
 }
 
 struct HerdCommands: Commands {

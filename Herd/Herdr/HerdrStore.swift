@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -11,6 +12,29 @@ final class HerdrStore: ObservableObject {
     @Published private(set) var branches: [String: String] = [:]
     /// Plugins installed in Herd's herdr session; refreshed when the palette opens.
     @Published private(set) var plugins: [HerdrPlugin] = []
+
+    // MARK: Idle organization
+    /// Project groups holding only workspaces that are in use.
+    @Published private(set) var activeGroups: [ProjectGroup] = []
+    /// Workspaces unused past `idleAfter`, most recently used first.
+    @Published private(set) var idleWorkspaces: [HerdrWorkspace] = []
+    @Published private(set) var activity = WorkspaceActivity()
+    @Published private(set) var pinnedWorkspaceIds: Set<String> = []
+    @Published var idleAfter: TimeInterval = WorkspaceActivity.defaultIdleAfter {
+        didSet {
+            UserDefaults.standard.set(idleAfter, forKey: Self.idleAfterKey)
+            repartition()
+        }
+    }
+    private static let stampsKey = "herd.activity.stamps"
+    private static let pinnedKey = "herd.activity.pinned"
+    private static let idleAfterKey = "herd.activity.idleAfter"
+    private var lastStampSave = Date.distantPast
+    /// Workspaces marked idle by hand: viewing them doesn't count as use
+    /// until the user focuses them again.
+    private var forcedIdle: Set<String> = []
+    private var lastFocusedWorkspaceId: String?
+    private var clockTimer: Timer?
     @Published private(set) var isConnected = false
     @Published var lastError: String?
 
@@ -22,6 +46,13 @@ final class HerdrStore: ObservableObject {
 
     init(client: HerdrClient) {
         self.client = client
+        let defaults = UserDefaults.standard
+        if let raw = defaults.dictionary(forKey: Self.stampsKey) as? [String: Double] {
+            activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
+        }
+        pinnedWorkspaceIds = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
+        let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
+        if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
     }
 
     var focusedWorkspace: HerdrWorkspace? {
@@ -63,6 +94,10 @@ final class HerdrStore: ObservableObject {
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRefresh() }
         }
+        // Workspaces cross the idle threshold with no snapshot change.
+        clockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.repartition() }
+        }
     }
 
     func scheduleRefresh() {
@@ -91,6 +126,7 @@ final class HerdrStore: ObservableObject {
     }
 
     func apply(_ snapshot: HerdrSnapshot) {
+        observeActivity(snapshot)
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot
         groups = ProjectGrouping.groups(snapshot: snapshot, resolveRoot: resolver.root(for:))
@@ -102,6 +138,108 @@ final class HerdrStore: ObservableObject {
             }
         }
         if branches != self.branches { self.branches = branches }
+        repartition()
+    }
+
+    // MARK: - Idle organization
+
+    /// Stamps activity. The focused workspace counts as in use only while
+    /// Herd is the active app, so leaving Herd open overnight doesn't keep it fresh.
+    private func observeActivity(_ snapshot: HerdrSnapshot) {
+        var updated = activity
+        let focused = snapshot.focusedWorkspaceId
+        if let focused, focused != lastFocusedWorkspaceId, lastFocusedWorkspaceId != nil {
+            forcedIdle.remove(focused)
+        }
+        lastFocusedWorkspaceId = focused
+        let viewed = NSApp?.isActive == true && !forcedIdle.contains(focused ?? "") ? focused : nil
+        updated.observe(snapshot, viewedWorkspaceId: viewed) { workspace in
+            let claudeCwds = snapshot.agents(inWorkspace: workspace.workspaceId)
+                .filter { AgentBrand.forAgent($0.agent)?.id == "claude" }
+                .compactMap { $0.cwd }
+            return claudeCwds.compactMap { ClaudeTranscriptActivity.lastActive(forCwd: $0) }.max()
+        }
+        guard updated != activity else { return }
+        activity = updated
+        if Date().timeIntervalSince(lastStampSave) > 10 {
+            lastStampSave = Date()
+            UserDefaults.standard.set(activity.stamps.mapValues { $0.timeIntervalSince1970 }, forKey: Self.stampsKey)
+        }
+        repartition()
+    }
+
+    func repartition() {
+        let split = activity.partition(
+            snapshot.workspaces, snapshot: snapshot, pinned: pinnedWorkspaceIds, idleAfter: idleAfter
+        )
+        let idleIds = Set(split.idle.map(\.workspaceId))
+        let active = groups.compactMap { group -> ProjectGroup? in
+            let members = group.workspaces.filter { !idleIds.contains($0.workspaceId) }
+            return members.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: members)
+        }
+        if active != activeGroups { activeGroups = active }
+        if split.idle != idleWorkspaces { idleWorkspaces = split.idle }
+    }
+
+    func isPinned(_ workspaceId: String) -> Bool { pinnedWorkspaceIds.contains(workspaceId) }
+
+    func setPinned(_ workspaceId: String, _ pinned: Bool) {
+        if pinned { pinnedWorkspaceIds.insert(workspaceId) } else { pinnedWorkspaceIds.remove(workspaceId) }
+        UserDefaults.standard.set(Array(pinnedWorkspaceIds), forKey: Self.pinnedKey)
+        repartition()
+    }
+
+    /// Moves a workspace to Idle now (unless it is pinned, focused, or busy).
+    func markIdle(_ workspaceId: String) {
+        setPinned(workspaceId, false)
+        forcedIdle.insert(workspaceId)
+        if workspaceId == snapshot.focusedWorkspaceId,
+           let next = activeGroups.flatMap(\.workspaces).first(where: { $0.workspaceId != workspaceId }) {
+            lastFocusedWorkspaceId = next.workspaceId
+            focusWorkspace(next.workspaceId)
+        }
+        var updated = activity
+        updated.markIdle(workspaceId)
+        activity = updated
+        repartition()
+    }
+
+    /// Project name for a workspace, for compact idle rows.
+    func projectName(of workspaceId: String) -> String? {
+        groups.first { $0.workspaces.contains { $0.workspaceId == workspaceId } }?.name
+    }
+
+    func closeIdleWorkspaces() {
+        let targets = idleWorkspaces
+        guard !targets.isEmpty else { return }
+        let client = self.client
+        let handle = toasts.progress("Closing \(targets.count) idle workspace\(targets.count == 1 ? "" : "s")…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var failures: [String] = []
+            for workspace in targets {
+                do {
+                    try client.call("workspace.close", ["workspace_id": workspace.workspaceId])
+                } catch {
+                    failures.append("\(workspace.label): \(Self.describeNonisolated(error))")
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let closed = targets.count - failures.count
+                if failures.isEmpty {
+                    self.toasts.succeed(handle, "Closed \(closed) idle workspace\(closed == 1 ? "" : "s")")
+                } else {
+                    self.toasts.fail(handle, "Closed \(closed) of \(targets.count) idle workspaces",
+                                     detail: failures.prefix(3).joined(separator: "\n"))
+                }
+                self.scheduleRefresh()
+            }
+        }
+    }
+
+    private nonisolated static func describeNonisolated(_ error: Error) -> String {
+        if case HerdrSocketError.server(_, let message) = error, !message.isEmpty { return message }
+        return String(describing: error)
     }
 
     // MARK: - Actions
@@ -210,9 +348,9 @@ final class HerdrStore: ObservableObject {
         focusTab(tabs[(current + offset + tabs.count) % tabs.count].tabId)
     }
 
-    /// Next/previous workspace in sidebar (project-grouped) order.
+    /// Next/previous workspace in sidebar order: active projects, then idle.
     func selectAdjacentWorkspace(offset: Int) {
-        let ordered = groups.flatMap(\.workspaces)
+        let ordered = activeGroups.flatMap(\.workspaces) + idleWorkspaces
         guard !ordered.isEmpty else { return }
         let current = ordered.firstIndex { $0.workspaceId == focusedWorkspace?.workspaceId } ?? 0
         focusWorkspace(ordered[(current + offset + ordered.count) % ordered.count].workspaceId)
@@ -296,10 +434,14 @@ final class HerdrStore: ObservableObject {
         ))
     }
 
-    func reloadHerdrConfig() {
-        perform("server.reload_config", [:], toast: ToastText(
-            progress: "Reloading herdr config…", success: "Reloaded herdr config", failure: "Couldn't reload herdr config"
-        ))
+    func reloadHerdrConfig(quiet: Bool = false) {
+        if quiet {
+            perform("server.reload_config", [:], failure: "Couldn't apply settings to herdr")
+        } else {
+            perform("server.reload_config", [:], toast: ToastText(
+                progress: "Reloading herdr config…", success: "Reloaded herdr config", failure: "Couldn't reload herdr config"
+            ))
+        }
     }
 
     func moveFocusedTab(by offset: Int) {

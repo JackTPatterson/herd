@@ -113,8 +113,60 @@ enum PaletteCatalog {
             items.append(action("closeWorkspace", "Close Workspace", "xmark.bin") {
                 store.closeWorkspace(workspace.workspaceId)
             })
+            if store.isPinned(workspace.workspaceId) {
+                items.append(action("unpinWorkspace", "Unpin Workspace", "pin.slash", keywords: ["idle", "keep"]) {
+                    store.setPinned(workspace.workspaceId, false)
+                })
+            } else {
+                items.append(action("pinWorkspace", "Pin Workspace to Keep in View", "pin", keywords: ["idle", "keep", "stale"]) {
+                    store.setPinned(workspace.workspaceId, true)
+                })
+            }
+            items.append(action("markIdle", "Move Workspace to Idle", "moon.zzz", keywords: ["stale", "archive", "hide"]) {
+                store.markIdle(workspace.workspaceId)
+            })
         }
+        if !store.idleWorkspaces.isEmpty {
+            let count = store.idleWorkspaces.count
+            items.append(action("closeIdle", "Close \(count) Idle Workspace\(count == 1 ? "" : "s")…", "xmark.bin.fill",
+                                keywords: ["stale", "cleanup", "unused"]) {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Close \(count) idle workspace\(count == 1 ? "" : "s")?"
+                alert.informativeText = store.idleWorkspaces.map(\.label).prefix(8).joined(separator: ", ")
+                alert.addButton(withTitle: "Close")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn { store.closeIdleWorkspaces() }
+            })
+        }
+        items.append(PaletteItem(
+            id: "action.idleThreshold", kind: .action, title: "Set Idle Threshold…",
+            subtitle: "Now \(IdleDock.thresholdLabel(store.idleAfter)) · e.g. 30m, 2h, 1d",
+            keywords: ["stale", "idle", "unused", "organize"],
+            icon: .symbol("clock.arrow.circlepath"),
+            effect: .prompt(title: "Move workspaces to Idle after", placeholder: "30m, 2h, 1d",
+                            initial: IdleDock.thresholdLabel(store.idleAfter)) { text in
+                guard let seconds = PaletteCatalog.parseDuration(text) else {
+                    ToastCenter.shared.fail(nil, "Couldn't read \"\(text)\"", detail: "Use a number with m, h, or d, like 45m or 3h")
+                    return
+                }
+                store.idleAfter = seconds
+                ToastCenter.shared.info("Idle threshold set to \(IdleDock.thresholdLabel(seconds))")
+            }
+        ))
         return items
+    }
+
+    /// Parses `45m`, `2h`, `1d`, or a bare number of minutes.
+    static func parseDuration(_ text: String) -> TimeInterval? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces).lowercased()
+        let unit = trimmed.last.flatMap { "mhd".contains($0) ? $0 : nil }
+        guard let value = Double(unit == nil ? trimmed : String(trimmed.dropLast())), value > 0 else { return nil }
+        switch unit {
+        case "h": return value * 3600
+        case "d": return value * 86_400
+        default: return value * 60
+        }
     }
 
     // MARK: Navigation

@@ -275,3 +275,68 @@ final class HerdrPluginTests: XCTestCase {
         XCTAssertEqual(PaletteKind.parse("!stamp").filter, .plugin)
     }
 }
+
+final class WorkspaceActivityTests: XCTestCase {
+    private func workspace(_ id: String, status: HerdrAgentStatus = .idle) -> HerdrWorkspace {
+        HerdrWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
+                       activeTabId: "\(id):t1", agentStatus: status, worktree: nil)
+    }
+
+    private func snapshot(_ workspaces: [HerdrWorkspace], agents: [HerdrAgent] = [], focused: String? = nil) -> HerdrSnapshot {
+        HerdrSnapshot(workspaces: workspaces, tabs: [], panes: [], agents: agents,
+                      focusedWorkspaceId: focused, focusedTabId: nil, focusedPaneId: nil)
+    }
+
+    private func agent(_ workspaceId: String, _ status: HerdrAgentStatus, seq: Int) -> HerdrAgent {
+        HerdrAgent(paneId: "\(workspaceId):p1", tabId: "\(workspaceId):t1", workspaceId: workspaceId, agent: "claude",
+                   name: nil, displayAgent: nil, agentStatus: status, stateChangeSeq: seq)
+    }
+
+    func testIdleAfterThresholdAndRecoveryStamp() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var activity = WorkspaceActivity()
+        let snap = snapshot([workspace("w1"), workspace("w2")], focused: "w1")
+        activity.observe(snap, viewedWorkspaceId: "w1", now: t0) { $0.workspaceId == "w2" ? t0.addingTimeInterval(-10_000) : nil }
+
+        let later = t0.addingTimeInterval(3 * 3600)
+        let split = activity.partition(snap.workspaces, snapshot: snap, pinned: [], idleAfter: 2 * 3600, now: later)
+        XCTAssertEqual(split.active.map(\.workspaceId), ["w1"], "focused stays active")
+        XCTAssertEqual(split.idle.map(\.workspaceId), ["w2"])
+    }
+
+    func testAgentChangesRefreshAndBusyAgentsNeverIdle() {
+        let t0 = Date(timeIntervalSince1970: 2_000_000)
+        var activity = WorkspaceActivity()
+        let ws = [workspace("w1")]
+        activity.observe(snapshot(ws, agents: [agent("w1", .idle, seq: 1)]), viewedWorkspaceId: nil, now: t0)
+        let t1 = t0.addingTimeInterval(5 * 3600)
+        let changed = snapshot(ws, agents: [agent("w1", .done, seq: 2)])
+        activity.observe(changed, viewedWorkspaceId: nil, now: t1)
+        XCTAssertEqual(activity.lastActive("w1"), t1)
+
+        let working = snapshot(ws, agents: [agent("w1", .working, seq: 3)])
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: working, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: changed, pinned: ["w1"], idleAfter: 60, now: t1.addingTimeInterval(9999)))
+        XCTAssertTrue(activity.isIdle(ws[0], snapshot: changed, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
+    }
+
+    func testClosedWorkspacesArePrunedAndAgeLabels() {
+        var activity = WorkspaceActivity(stamps: ["gone": Date()])
+        activity.observe(snapshot([workspace("w1")]), viewedWorkspaceId: nil)
+        XCTAssertNil(activity.lastActive("gone"))
+        let now = Date(timeIntervalSince1970: 5_000_000)
+        XCTAssertEqual(WorkspaceActivity.ageLabel(since: now.addingTimeInterval(-90 * 60), now: now), "1h")
+        XCTAssertEqual(WorkspaceActivity.ageLabel(since: now.addingTimeInterval(-3 * 86_400), now: now), "3d")
+    }
+
+    func testClaudeTranscriptRecovery() {
+        XCTAssertEqual(ClaudeTranscriptActivity.projectDirectory(forCwd: "/Users/me/Developer/lab-vault", home: "/Users/me"),
+                       "/Users/me/.claude/projects/-Users-me-Developer-lab-vault")
+        let lines = """
+        {"type":"user","timestamp":"2026-09-17T14:57:01.566Z"}
+        {"type":"last-prompt"}
+        """
+        let date = ClaudeTranscriptActivity.lastTimestamp(inJSONLines: lines)
+        XCTAssertEqual(date.map { Int($0.timeIntervalSince1970) }, 1789657021)
+    }
+}

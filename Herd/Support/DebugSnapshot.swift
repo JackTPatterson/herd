@@ -27,11 +27,25 @@ enum DebugSnapshot {
         return nil
     }
 
+    /// Saves secondary windows (Settings, panels) as `window-<title>.png`.
+    private static func dumpSecondaryWindows(to dir: String, main: NSWindow) {
+        for window in NSApp.windows where window !== main && window.isVisible {
+            guard let content = window.contentView,
+                  let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { continue }
+            content.cacheDisplay(in: content.bounds, to: rep)
+            let name = window.title.isEmpty ? "untitled" : window.title.replacingOccurrences(of: " ", with: "-")
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: dir + "/window-\(name).png"))
+            }
+        }
+    }
+
     private static func dump(to dir: String) {
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && findSurface(in: $0.contentView!) != nil }),
               let content = window.contentView,
               let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
         content.cacheDisplay(in: content.bounds, to: rep)
+        dumpSecondaryWindows(to: dir, main: window)
         let chrome = NSImage(size: content.bounds.size)
         chrome.addRepresentation(rep)
 

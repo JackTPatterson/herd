@@ -26,31 +26,6 @@ struct HerdrSession {
     /// native tabs instead.
     static let hiddenTopRows = 1
 
-    /// herdr config for the embedded client: Herd draws the sidebar and tab
-    /// row natively, so herdr's own chrome is hidden.
-    static let managedConfig = """
-    # Managed by Herd. Rewritten at launch; edit ~/.config/herdr/config.toml for
-    # a standalone herdr instead.
-    onboarding = false
-
-    [ui]
-    sidebar_start_collapsed = true
-    sidebar_collapsed_mode = "hidden"
-    hide_tab_bar_when_single_tab = false
-    tab_bar_position = "top"
-    prompt_new_tab_name = false
-    confirm_close = false
-    pane_outer_borders = false
-    accent = "#19aad8"
-
-    [ui.toast]
-    delivery = "system"
-    """
-
-    func writeManagedConfig() {
-        try? Self.managedConfig.write(toFile: configPath, atomically: true, encoding: .utf8)
-    }
-
     /// Shell command libghostty runs for the terminal surface.
     var command: String {
         "\(shellQuote(herdrPath)) --session \(Self.name)"

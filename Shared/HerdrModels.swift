@@ -89,12 +89,15 @@ struct HerdrAgent: Codable, Equatable, Identifiable {
     let name: String?
     let displayAgent: String?
     let agentStatus: HerdrAgentStatus
+    var stateChangeSeq: Int? = nil
+    var cwd: String? = nil
 
     var id: String { paneId }
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id", tabId = "tab_id", workspaceId = "workspace_id"
         case agent, name, displayAgent = "display_agent", agentStatus = "agent_status"
+        case stateChangeSeq = "state_change_seq", cwd
     }
 }
 

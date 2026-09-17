@@ -6,23 +6,34 @@ struct RootView: View {
     @ObservedObject var ui: UIState
     let session: HerdrSession?
     @StateObject private var palette = PaletteModel()
+    @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var settings = SettingsStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
+            // Chrome views are re-identified per theme so every color
+            // re-resolves; the terminal keeps its identity (and herdr client).
             TitleBar(store: store, ui: ui)
+                .id(settings.values.themeName)
             HStack(spacing: 0) {
                 if ui.sidebarVisible {
-                    SidebarView(store: store)
-                    Rectangle().fill(Theme.divider).frame(width: 1)
+                    HStack(spacing: 0) {
+                        SidebarView(store: store)
+                        Rectangle().fill(Theme.divider).frame(width: 1)
+                    }
+                    .id(settings.values.themeName)
+                    .transition(motion.animates(.sidebar) ? .move(edge: .leading) : .identity)
                 }
                 VStack(spacing: 0) {
                     TabBarView(store: store)
+                        .id(settings.values.themeName)
                     terminal
                 }
             }
         }
         .overlay(alignment: .bottomTrailing) {
             ToastStack(center: ToastCenter.shared)
+                .id(settings.values.themeName)
         }
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }
@@ -32,9 +43,13 @@ struct RootView: View {
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }
-                    .transition(.opacity)
+                    .transition(motion.animates(.palette)
+                        ? .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+                        : .identity)
             }
         }
+        .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
+        .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .onChange(of: ui.paletteVisible) { _, visible in
             DebugSnapshot.overlayVisible = visible
             if visible {
@@ -55,9 +70,14 @@ struct RootView: View {
                 palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
             }
         }
-        .background(Theme.terminalBackground)
+        .background(settings.values.backgroundOpacity < 1 ? Color.clear : Theme.terminalBackground)
+        .background(WindowTransparency(
+            opacity: settings.values.backgroundOpacity,
+            blur: settings.values.backgroundBlur,
+            themeName: settings.values.themeName
+        ))
         .ignoresSafeArea()
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.colorScheme)
     }
 
     private func closePalette() {
@@ -75,7 +95,8 @@ struct RootView: View {
                 onTitleChange: { _ in },
                 onExit: { NSApp.terminate(nil) }
             )
-            .background(Theme.terminalBackground)
+            .background(Color(hex: TerminalTheme.named(settings.values.themeName).background)
+                .opacity(settings.values.backgroundOpacity))
         } else {
             VStack(spacing: 8) {
                 Text("herdr not found").font(.system(size: 14, weight: .semibold))
@@ -85,6 +106,27 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.terminalBackground)
+        }
+    }
+}
+
+/// Makes the window see-through when the terminal background is translucent,
+/// and applies Ghostty's background blur.
+private struct WindowTransparency: NSViewRepresentable {
+    let opacity: Double
+    let blur: Bool
+    let themeName: String
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            let translucent = opacity < 1
+            window.isOpaque = !translucent
+            window.backgroundColor = translucent ? .clear : Theme.palette.nsColor(\.background)
+            window.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
+            HerdTerminalRuntime.applyBackgroundBlur(to: window)
         }
     }
 }

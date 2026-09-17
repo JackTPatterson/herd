@@ -9,7 +9,14 @@ struct AgentStateGlyph: View {
     var body: some View {
         switch status {
         case .working:
-            SpinnerArc(size: size)
+            if MotionPreferences.shared.animates(.agentStatus) {
+                SpinnerArc(size: size)
+            } else {
+                Circle()
+                    .trim(from: 0.15, to: 0.85)
+                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                    .frame(width: size - 1, height: size - 1)
+            }
         case .blocked:
             Image("state-blocked")
                 .resizable()

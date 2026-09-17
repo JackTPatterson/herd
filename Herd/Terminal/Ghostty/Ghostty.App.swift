@@ -90,6 +90,21 @@ extension Ghostty {
             }
         }
 
+        /// Herd: applies new config-file-syntax overrides to the running app and
+        /// every surface (fonts, colors, cursor, opacity, input options).
+        func updateConfig(overrides: String) {
+            let newConfig = Config(overrides: overrides)
+            guard let app, let cfg = newConfig.config else { return }
+            ghostty_app_update_config(app, cfg)
+            config = newConfig
+        }
+
+        /// Herd: applies Ghostty's background blur to a window.
+        func applyBackgroundBlur(to window: NSWindow) {
+            guard let app else { return }
+            ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
+        }
+
         init(overrides: String) {
             self.config = Config(overrides: overrides)
             guard let cfg = self.config.config else { return }

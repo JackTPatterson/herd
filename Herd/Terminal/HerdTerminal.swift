@@ -34,6 +34,18 @@ final class HerdTerminalRuntime {
         runtime.ghosttyApp = Ghostty.App(overrides: overrides)
     }
 
+    /// Replaces the overrides and applies them live to every surface.
+    static func updateConfig(overrides: String) {
+        let runtime = shared
+        runtime.overrides = overrides
+        runtime.ghosttyApp?.updateConfig(overrides: overrides)
+    }
+
+    /// Applies (or clears) Ghostty's background blur on a window.
+    static func applyBackgroundBlur(to window: NSWindow) {
+        shared.ghosttyApp?.applyBackgroundBlur(to: window)
+    }
+
     /// Makes the key window's terminal surface first responder again.
     static func focusTerminal() {
         DispatchQueue.main.async {

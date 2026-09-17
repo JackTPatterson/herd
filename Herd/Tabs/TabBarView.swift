@@ -5,15 +5,22 @@ import SwiftUI
 /// tabs are named after the subagent.
 struct TabBarView: View {
     @ObservedObject var store: HerdrStore
+    @ObservedObject private var motion = MotionPreferences.shared
+    @Namespace private var indicator
 
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(store.focusedWorkspaceTabs) { tab in
-                        TabItem(store: store, tab: tab)
+                        TabItem(store: store, tab: tab, indicator: indicator)
+                            .transition(motion.animates(.tabs)
+                                ? .asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .opacity)
+                                : .identity)
                     }
                 }
+                .animation(motion.animation(.tabs), value: store.focusedWorkspaceTabs.map(\.tabId))
+                .animation(motion.animation(.tabs, .smooth(duration: 0.18)), value: store.snapshot.focusedTabId)
             }
             NewTabButton { store.newTab() }
             Spacer(minLength: 0)
@@ -27,6 +34,7 @@ struct TabBarView: View {
 private struct TabItem: View {
     @ObservedObject var store: HerdrStore
     let tab: HerdrTab
+    let indicator: Namespace.ID
     @State private var hovered = false
 
     var body: some View {
@@ -74,7 +82,10 @@ private struct TabItem: View {
         )
         .overlay(alignment: .top) {
             if isActive {
-                Rectangle().fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent).frame(height: 2)
+                Rectangle()
+                    .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
+                    .frame(height: 2)
+                    .matchedGeometryEffect(id: "activeTabIndicator", in: indicator)
             }
         }
         .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }

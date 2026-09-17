@@ -91,6 +91,8 @@ struct CommandPaletteView: View {
     @ObservedObject var model: PaletteModel
     let onClose: () -> Void
     @FocusState private var fieldFocused: Bool
+    @ObservedObject private var motion = MotionPreferences.shared
+    @Namespace private var selectionSpace
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -213,7 +215,8 @@ struct CommandPaletteView: View {
                         PaletteRow(
                             item: result.item,
                             indices: result.indices,
-                            selected: index == model.selection
+                            selected: index == model.selection,
+                            selectionSpace: selectionSpace
                         )
                         .id(result.item.id)
                         .contentShape(Rectangle())
@@ -224,6 +227,7 @@ struct CommandPaletteView: View {
                     }
                 }
                 .padding(.vertical, 6)
+                .animation(motion.animation(.palette, .smooth(duration: 0.12)), value: model.selection)
             }
             .frame(height: listHeight(results))
             .onChange(of: model.selection) { _, newValue in
@@ -384,6 +388,7 @@ private struct PaletteRow: View {
     let item: PaletteItem
     let indices: [Int]
     let selected: Bool
+    let selectionSpace: Namespace.ID
 
     var body: some View {
         HStack(spacing: 10) {
@@ -412,15 +417,16 @@ private struct PaletteRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: item.subtitle.isEmpty ? 32 : 42)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(selected ? Theme.cardSelected : Color.clear)
-                .overlay(alignment: .leading) {
-                    if selected {
+        .background {
+            if selected {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Theme.cardSelected)
+                    .overlay(alignment: .leading) {
                         Rectangle().fill(Theme.accent).frame(width: 2).padding(.vertical, 6)
                     }
-                }
-        )
+                    .matchedGeometryEffect(id: "paletteSelection", in: selectionSpace)
+            }
+        }
         .padding(.horizontal, 6)
     }
 
@@ -445,7 +451,7 @@ private struct PaletteRow: View {
             let piece = Text(String(character))
             text = text + (marked.contains(offset)
                 ? piece.foregroundColor(Theme.accent).bold()
-                : piece.foregroundColor(selected ? Theme.textPrimary : Color(hex: "#D6D6D6")))
+                : piece.foregroundColor(selected ? Theme.textPrimary : Theme.textMuted))
         }
         return text
     }

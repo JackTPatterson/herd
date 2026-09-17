@@ -1,25 +1,33 @@
 import AppKit
 import SwiftUI
 
-/// Warp's default Dark theme and vertical-tab metrics.
+/// App chrome colors and metrics.
 ///
-/// Colors: `app/src/themes/default_themes.rs` `dark_theme()` (background
-/// #050505, foreground #ffffff, accent #19AAD8) and its ANSI table. Metrics:
+/// Colors are derived from the selected terminal theme (Warp's built-in
+/// themes) so the whole window matches it: surfaces step from the theme
+/// background toward its foreground the way Warp's Dark theme steps from
+/// #050505 (chrome #111111, cards #1B1B1B, borders #2A2A2A). Metrics come from
 /// `app/src/workspace/view/vertical_tabs.rs` (248pt panel, 4pt row radius,
-/// tab colors at 15% opacity, 50% on hover).
+/// tab colors at 15% opacity).
 enum Theme {
-    static let terminalBackground = Color(hex: "#050505")
-    static let chrome = Color(hex: "#111111")
-    static let sidebar = Color(hex: "#141414")
-    static let card = Color(hex: "#1B1B1B")
-    static let cardSelected = Color(hex: "#262626")
-    static let hover = Color(hex: "#1F1F1F")
-    static let border = Color(hex: "#2A2A2A")
-    static let divider = Color(hex: "#1F1F1F")
-    static let textPrimary = Color(hex: "#F1F1F1")
-    static let textSecondary = Color(hex: "#9E9E9E")
-    static let textTertiary = Color(hex: "#6B6B6B")
-    static let accent = Color(hex: "#19AAD8")
+    /// The active palette; updated by `SettingsStore` when the theme changes.
+    nonisolated(unsafe) static var palette = ThemePalette(theme: .named("Dark"))
+
+    static var terminalBackground: Color { palette.color(\.background) }
+    static var chrome: Color { palette.color(\.chrome) }
+    static var sidebar: Color { palette.color(\.sidebar) }
+    static var card: Color { palette.color(\.card) }
+    static var cardSelected: Color { palette.color(\.cardSelected) }
+    static var hover: Color { palette.color(\.hover) }
+    static var border: Color { palette.color(\.border) }
+    static var divider: Color { palette.color(\.divider) }
+    static var textPrimary: Color { palette.color(\.textPrimary) }
+    static var textSecondary: Color { palette.color(\.textSecondary) }
+    static var textTertiary: Color { palette.color(\.textTertiary) }
+    static var textMuted: Color { palette.color(\.textMuted) }
+    static var accent: Color { palette.color(\.accent) }
+    static var isLight: Bool { palette.isLight }
+    static var colorScheme: ColorScheme { palette.isLight ? .light : .dark }
 
     static let sidebarWidth: CGFloat = 248
     static let rowRadius: CGFloat = 4
@@ -32,33 +40,6 @@ enum Theme {
     static let uiFontMedium = Font.system(size: 12, weight: .medium)
     static let headerFont = Font.system(size: 10.5, weight: .semibold)
     static let monoFont = Font.system(size: 11.5, design: .monospaced)
-
-    /// libghostty config for the terminal, matching Warp Dark's ANSI palette.
-    static let ghosttyConfig = """
-    background = 050505
-    foreground = f1f1f1
-    cursor-color = 19aad8
-    selection-background = 2a4a5a
-    font-size = 13
-    window-padding-x = 10
-    window-padding-y = 0,6
-    palette = 0=#616161
-    palette = 1=#ff8272
-    palette = 2=#b4fa72
-    palette = 3=#fefdc2
-    palette = 4=#a5d5fe
-    palette = 5=#ff8ffd
-    palette = 6=#d0d1fe
-    palette = 7=#f1f1f1
-    palette = 8=#8e8e8e
-    palette = 9=#ffc4bd
-    palette = 10=#d6fcb9
-    palette = 11=#fefdd5
-    palette = 12=#c1e3fe
-    palette = 13=#ffb1fe
-    palette = 14=#e5e6fe
-    palette = 15=#feffff
-    """ + "\n" + herdShortcutUnbinds
 
     /// Shortcuts Herd's menus own; unbound in Ghostty so the surface lets them through.
     static let herdShortcutUnbinds = [
@@ -111,5 +92,68 @@ extension NSColor {
             blue: CGFloat(value & 0xFF) / 255,
             alpha: 1
         )
+    }
+}
+
+/// Chrome colors computed from a terminal theme.
+struct ThemePalette: Equatable {
+    let isLight: Bool
+    let background: String
+    let chrome: String
+    let sidebar: String
+    let card: String
+    let cardSelected: String
+    let hover: String
+    let border: String
+    let divider: String
+    let textPrimary: String
+    let textSecondary: String
+    let textTertiary: String
+    let textMuted: String
+    let accent: String
+
+    init(theme: TerminalTheme) {
+        let bg = theme.background
+        let fg = theme.foreground
+        // Light backgrounds need slightly larger steps to read as layers.
+        let k = theme.isLight ? 1.25 : 1.0
+        func step(_ amount: Double) -> String { Self.mix(bg, fg, amount * k) }
+        isLight = theme.isLight
+        background = bg
+        chrome = step(0.045)
+        sidebar = step(0.06)
+        card = step(0.085)
+        cardSelected = step(0.14)
+        hover = step(0.11)
+        border = step(0.15)
+        divider = step(0.1)
+        textPrimary = Self.mix(bg, fg, 0.94)
+        textSecondary = Self.mix(bg, fg, 0.6)
+        textTertiary = Self.mix(bg, fg, 0.4)
+        textMuted = Self.mix(bg, fg, 0.82)
+        accent = theme.accent
+    }
+
+    func color(_ key: KeyPath<ThemePalette, String>) -> Color {
+        Color(hex: self[keyPath: key])
+    }
+
+    func nsColor(_ key: KeyPath<ThemePalette, String>) -> NSColor {
+        NSColor(hex: self[keyPath: key]) ?? .windowBackgroundColor
+    }
+
+    /// Linear sRGB mix of two hex colors (`amount` 0 = a, 1 = b).
+    static func mix(_ a: String, _ b: String, _ amount: Double) -> String {
+        func components(_ hex: String) -> (Double, Double, Double) {
+            let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+            return (Double((value >> 16) & 0xFF), Double((value >> 8) & 0xFF), Double(value & 0xFF))
+        }
+        let t = max(0, min(1, amount))
+        let (ar, ag, ab) = components(a)
+        let (br, bg, bb) = components(b)
+        return String(format: "%02x%02x%02x",
+                      Int((ar + (br - ar) * t).rounded()),
+                      Int((ag + (bg - ag) * t).rounded()),
+                      Int((ab + (bb - ab) * t).rounded()))
     }
 }
