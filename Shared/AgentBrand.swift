@@ -1,0 +1,73 @@
+import Foundation
+
+/// Agent vendor identity: display name, logo asset, and brand hue.
+///
+/// Values come from herdr-radar (MIT, `lib/palette.js` and `lib/logos.js`):
+/// hues are each vendor's published color, adjusted only where the published
+/// value is unreadable on a dark or light panel. Vendors that sign in black
+/// have no hue and render in the neutral ink.
+struct AgentBrand: Equatable {
+    let id: String
+    let displayName: String
+    /// Hex like `#d97757`, or nil for monochrome brands.
+    let hueHex: String?
+
+    /// Asset catalog image name for the vendor mark, if bundled.
+    var logoAssetName: String? {
+        Self.logoIds.contains(id) ? "agent-\(id)" : nil
+    }
+
+    static func forAgent(_ rawAgent: String?) -> AgentBrand? {
+        guard let raw = rawAgent?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else { return nil }
+        let id = aliases[raw] ?? raw
+        return AgentBrand(
+            id: id,
+            displayName: displayNames[id] ?? rawAgent!,
+            hueHex: hues[id] ?? (displayNames[id] != nil ? nil : hues["other"])
+        )
+    }
+
+    // herdr-radar lib/palette.js `brand`.
+    static let hues: [String: String] = [
+        "claude": "#d97757",
+        "gemini": "#4285f4",
+        "kimi": "#1783ff",
+        "deepseek": "#4d6bfe",
+        "qwen": "#615ced",
+        "kiro": "#9046ff",
+        "cline": "#586876",
+        "kilo": "#9a9808",
+        "other": "#c78a1f",
+    ]
+
+    // herdr-radar lib/logos.js `DISPLAY`.
+    static let displayNames: [String: String] = [
+        "claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "omp": "OhMyPosh",
+        "cline": "Cline", "mastracode": "Mastra", "kimi": "Kimi", "kilo": "Kilo", "maki": "Maki",
+        "pi": "Pi", "hermes": "Hermes", "cursor": "Cursor", "copilot": "Copilot",
+        "deepseek": "DeepSeek", "gemini": "Gemini", "gpt": "GPT", "qwen": "Qwen", "grok": "grok",
+        "agy": "Antigravity", "kiro": "Kiro", "amp": "Amp", "devin": "Devin", "qodercli": "Qoder",
+    ]
+
+    /// herdr agent ids that differ from radar's logo keys.
+    static let aliases: [String: String] = [
+        "claude_code": "claude", "claude-code": "claude", "antigravity": "agy",
+        "open_code": "opencode", "github_copilot": "copilot", "hermes-agent": "hermes",
+    ]
+
+    static let logoIds: Set<String> = [
+        "agy", "amp", "claude", "cline", "codex", "copilot", "cursor", "deepseek", "devin",
+        "gemini", "gpt", "grok", "hermes", "kilo", "kimi", "kiro", "maki", "mastracode",
+        "omp", "opencode", "pi", "qodercli", "qwen",
+    ]
+}
+
+/// State colors from herdr-radar `lib/palette.js` `state`: green and red are
+/// semantic and outrank branding.
+enum AgentStateColor {
+    static let done = "#4c9a5a"
+    static let blocked = "#c04a4a"
+    static let unknown = "#907aa9"
+    static let none = "#9a9eb3"
+}

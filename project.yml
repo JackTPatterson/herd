@@ -1,0 +1,81 @@
+name: Herd
+options:
+  bundleIdPrefix: studio.jpdigital
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_HARDENED_RUNTIME: NO
+targets:
+  Herd:
+    type: application
+    platform: macOS
+    sources:
+      - path: Herd
+      - path: Shared
+    dependencies:
+      - framework: Vendor/GhosttyKit.xcframework
+        embed: false
+      - sdk: Carbon.framework
+      - sdk: Metal.framework
+      - sdk: QuartzCore.framework
+      - sdk: IOSurface.framework
+      - sdk: CoreText.framework
+      - sdk: CoreVideo.framework
+      - sdk: UniformTypeIdentifiers.framework
+      - target: herd-cli
+        embed: true
+        copy:
+          destination: executables
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd
+        PRODUCT_NAME: Herd
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Herd
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        OTHER_LDFLAGS: "-lc++"
+        ENABLE_APP_SANDBOX: NO
+  herd-cli:
+    type: tool
+    platform: macOS
+    sources:
+      - path: HerdCLI
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_NAME: herd-cli
+  HerdTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: HerdTests
+      - path: Shared
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd.tests
+schemes:
+  Herd:
+    build:
+      targets:
+        Herd: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - HerdTests
+  HerdCore:
+    build:
+      targets:
+        herd-cli: all
+        HerdTests: [test]
+    test:
+      targets:
+        - HerdTests
