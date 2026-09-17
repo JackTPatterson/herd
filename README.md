@@ -158,6 +158,15 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Pasting an image to an agent
+
+⌘V with an image on the clipboard writes it into
+`~/Library/Application Support/Herd/pasted` and types the path into the pane,
+because a path is what agents read and binary is what terminals mangle. A
+file copied in Finder pastes its own path instead of being rewritten. Herd
+keeps the last fifty and drops the rest. Settings → Agents turns it off, and
+text pastes are untouched.
+
 ## Herd's command line
 
 At a bare shell prompt, Herd takes the keyboard and edits the line itself,

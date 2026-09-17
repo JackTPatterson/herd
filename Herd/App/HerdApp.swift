@@ -29,6 +29,7 @@ struct HerdApp: App {
         let prompt = PromptEditor(store: store)
         _prompt = StateObject(wrappedValue: prompt)
         HerdKeyHook.prompt = prompt
+        HerdKeyHook.store = store
         settings.reloadHerdr = { [weak store] in store?.reloadHerdrConfig(quiet: true) }
         HerdTerminalRuntime.configure(overrides: settings.values.ghosttyConfig + "\n" + Theme.herdShortcutUnbinds)
     }
@@ -213,7 +214,16 @@ enum HerdKeyHook {
     static weak var controller: SlashController?
     static weak var prompt: PromptEditor?
 
+    static weak var store: HerdrStore?
+
     static func handleKeyDown(_ event: NSEvent) -> Bool {
+        // An image on the clipboard becomes a path, in any pane.
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "v",
+           prompt?.isActive != true,
+           let store, PasteHandler.handleCommandV(store: store) {
+            return true
+        }
         // Agent panes get the slash menu; shell prompts get Herd's own line.
         if controller?.handleKeyDown(event) == true { return true }
         return prompt?.handleKeyDown(event) ?? false

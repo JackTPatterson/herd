@@ -49,6 +49,7 @@ struct HerdSettings: Codable, Equatable {
     var slashMenu = true
     var slashRunsCommands = true
     var promptEditor = true
+    var pasteImagesAsFiles = true
     var autoNameTabs = true
     var showTips = true
 
@@ -146,6 +147,7 @@ struct HerdSettings: Codable, Equatable {
         slashMenu = value("slashMenu", defaults.slashMenu)
         slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
         promptEditor = value("promptEditor", defaults.promptEditor)
+        pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         showTips = value("showTips", defaults.showTips)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)

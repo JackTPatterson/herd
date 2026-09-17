@@ -1438,3 +1438,98 @@ final class CommandSequenceTests: XCTestCase {
         XCTAssertTrue(sequences.common(in: "/elsewhere").isEmpty)
     }
 }
+
+final class TwinTranscriptTests: XCTestCase {
+    func testAClaudeTranscriptBecomesAConversation() {
+        let lines = [
+            #"{"type":"ai-title","aiTitle":"Refactor auth"}"#,
+            #"{"type":"user","uuid":"u1","timestamp":"2026-09-17T10:00:00.000Z","cwd":"/repo","message":{"role":"user","content":"fix the login bug"}}"#,
+            #"{"type":"assistant","uuid":"a1","message":{"model":"claude-opus-5","content":[{"type":"thinking","thinking":"consider the session store"},{"type":"text","text":"I'll look at the session store."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/repo/auth.swift"}}],"usage":{"input_tokens":120,"output_tokens":40,"cache_read_input_tokens":900}}}"#,
+            #"{"type":"user","uuid":"u2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"func login() {}\nmore"}]}}"#,
+        ]
+        let conversation = TwinTranscript.parseClaude(lines: lines)
+        XCTAssertEqual(conversation.title, "Refactor auth")
+        XCTAssertEqual(conversation.model, "claude-opus-5")
+        XCTAssertEqual(conversation.cwd, "/repo")
+        XCTAssertEqual(conversation.messages.count, 3)
+        XCTAssertEqual(conversation.messages[0].role, .user)
+        XCTAssertEqual(conversation.messages[1].blocks.count, 3)
+        XCTAssertEqual(conversation.messages[1].blocks[0], .thinking("consider the session store"))
+        XCTAssertEqual(conversation.messages[1].blocks[2],
+                       .toolCall(id: "t1", name: "Read", summary: "/repo/auth.swift"))
+        XCTAssertEqual(conversation.messages[2].blocks[0],
+                       .toolResult(id: "t1", summary: "func login() {}", isError: false))
+        XCTAssertEqual(conversation.usage?.inputTokens, 120)
+        XCTAssertEqual(conversation.usage?.cacheReadTokens, 900)
+        XCTAssertEqual(conversation.consumedLines, 4)
+    }
+
+    func testACodexRolloutBecomesTheSameShape() {
+        let lines = [
+            #"{"type":"session_meta","timestamp":"2026-09-17T10:00:00Z","payload":{"id":"s1","cwd":"/work"}}"#,
+            #"{"type":"event_msg","payload":{"type":"turn_started","model_context_window":272000}}"#,
+            #"{"type":"response_item","payload":{"type":"message","id":"m1","role":"user","content":[{"type":"input_text","text":"run the tests"}]}}"#,
+            #"{"type":"response_item","payload":{"type":"function_call","id":"f1","call_id":"c1","name":"shell","arguments":"{\"command\":\"cargo test\"}"}}"#,
+            #"{"type":"response_item","payload":{"type":"function_call_output","id":"o1","call_id":"c1","output":"test result: ok"}}"#,
+            #"{"type":"token_usage_record","payload":{"usage":{"input_tokens":50,"output_tokens":10,"cached_input_tokens":4}}}"#,
+        ]
+        let conversation = TwinTranscript.parseCodex(lines: lines)
+        XCTAssertEqual(conversation.cwd, "/work")
+        XCTAssertEqual(conversation.messages.count, 3)
+        XCTAssertEqual(conversation.messages[0].blocks, [.text("run the tests")])
+        XCTAssertEqual(conversation.messages[1].blocks,
+                       [.toolCall(id: "c1", name: "shell", summary: "cargo test")])
+        XCTAssertEqual(conversation.messages[2].blocks,
+                       [.toolResult(id: "c1", summary: "test result: ok", isError: false)])
+        XCTAssertEqual(conversation.usage?.contextWindow, 272_000)
+        XCTAssertEqual(conversation.usage?.total, 60)
+    }
+
+    func testTheAgentDecidesWhichReaderRunsAndBadLinesAreSkipped() {
+        let codexLine = #"{"type":"response_item","payload":{"type":"message","id":"m","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#
+        XCTAssertEqual(TwinTranscript.parse(agent: "codex", lines: [codexLine]).messages.first?.blocks, [.text("done")])
+        // Claude's reader ignores a Codex line rather than inventing a turn.
+        XCTAssertTrue(TwinTranscript.parse(agent: "claude", lines: [codexLine]).messages.isEmpty)
+        // Half-written lines are normal while a file is being appended to.
+        let torn = TwinTranscript.parseClaude(lines: ["", "{\"type\":\"assistant\",", "not json"])
+        XCTAssertTrue(torn.messages.isEmpty)
+        XCTAssertEqual(torn.consumedLines, 3)
+    }
+
+    func testSummariesPickTheMeaningfulFieldAndStayShort() {
+        XCTAssertEqual(TwinTranscript.toolSummary(name: "Bash", input: ["command": "ls -la"]), "ls -la")
+        XCTAssertEqual(TwinTranscript.toolSummary(name: "Edit", input: ["file_path": "/a/b.swift", "old": "x"]), "/a/b.swift")
+        XCTAssertEqual(TwinTranscript.toolSummary(name: "shell", input: "{\"command\":\"go build\"}"), "go build")
+        XCTAssertEqual(TwinTranscript.condense("\n\n  first real line  \nsecond"), "first real line")
+        XCTAssertEqual(TwinTranscript.condense(String(repeating: "x", count: 200)).count, 120)
+    }
+}
+
+final class ImagePasteTests: XCTestCase {
+    func testPastedImagesGetTimedNamesAndQuotedPaths() {
+        let name = ImagePaste.filename(at: Date(timeIntervalSince1970: 1_700_000_000), extension: "png")
+        XCTAssertTrue(name.hasPrefix("pasted-"))
+        XCTAssertTrue(name.hasSuffix(".png"))
+        // A path lands on a command line, so spaces have to survive it.
+        XCTAssertEqual(ImagePaste.insertion(for: "/tmp/a.png"), "/tmp/a.png")
+        XCTAssertEqual(ImagePaste.insertion(for: "/tmp/my shot.png"), "'/tmp/my shot.png'")
+        XCTAssertEqual(ImagePaste.insertion(for: "/tmp/it's.png"), #"'/tmp/it'"'"'s.png'"#)
+    }
+
+    func testSavingWritesTheFileAndPruningKeepsTheRecentOnes() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let path = try ImagePaste.save(Data("png-bytes".utf8), home: home,
+                                       at: Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+        XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), "png-bytes")
+
+        for offset in 1...4 {
+            _ = try ImagePaste.save(Data("x".utf8), home: home,
+                                    at: Date(timeIntervalSince1970: 1_700_000_000 + Double(offset)))
+        }
+        ImagePaste.prune(keeping: 2, home: home)
+        let left = try FileManager.default.contentsOfDirectory(atPath: ImagePaste.directory(home: home))
+        XCTAssertEqual(left.count, 2)
+    }
+}

@@ -427,6 +427,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Paste images as files",
+                detail: "⌘V with an image on the clipboard writes it out and pastes the path, which is what agents can actually read."
+            ) {
+                Toggle("", isOn: $settings.values.pasteImagesAsFiles).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Command specs",
                 detail: specDetail
             ) {
