@@ -7,11 +7,14 @@ import Foundation
 @MainActor
 final class SlashController: ObservableObject {
     @Published private(set) var commands: [SlashCommand] = []
+    /// Submenus the user has opened, e.g. `/model` then a model's efforts.
+    @Published private(set) var path: [SlashCommand] = []
     @Published var query = ""
     @Published var selection = 0
     /// The pane the menu is typing into; nil when closed.
     @Published private(set) var paneId: String?
     @Published private(set) var agentName = ""
+    private var agentKind = ""
 
     private unowned let store: HerdrStore
     /// Characters typed into each pane since its prompt was last submitted,
@@ -24,8 +27,35 @@ final class SlashController: ObservableObject {
 
     var isOpen: Bool { paneId != nil }
 
+    /// The level being shown: a submenu's children, or the root list.
+    var level: [SlashCommand] {
+        path.last?.children ?? commands
+    }
+
     var matches: [SlashCommand] {
-        SlashCommands.matching(query, in: commands)
+        SlashCommands.matching(query, in: level)
+    }
+
+    var selectedHasChildren: Bool {
+        matches.indices.contains(selection) && matches[selection].hasChildren
+    }
+
+    /// What Return will do to the highlighted command.
+    var selectedRuns: Bool {
+        guard matches.indices.contains(selection) else { return false }
+        let command = matches[selection]
+        return !command.hasChildren && command.argumentHint.isEmpty && SettingsStore.shared.values.slashRunsCommands
+    }
+
+    /// Opens the highlighted command's submenu, if it has one.
+    func openSelected() {
+        guard matches.indices.contains(selection) else { return }
+        descend(matches[selection])
+    }
+
+    /// `/model gpt-6-astra` while two submenus deep.
+    var breadcrumb: String {
+        path.last?.insertion ?? "/"
     }
 
     // MARK: - Key interception
@@ -78,17 +108,42 @@ final class SlashController: ObservableObject {
     func open(paneId: String, agent: String?) {
         let snapshot = store.snapshot
         let cwd = snapshot.panes.first { $0.paneId == paneId }?.cwd
-        commands = SlashCommands.all(agent: agent, cwd: cwd)
         agentName = AgentBrand.forAgent(agent)?.displayName ?? "the agent"
+        agentKind = AgentBrand.forAgent(agent)?.id ?? agent ?? ""
         query = ""
         selection = 0
+        path = []
+        commands = SlashCommands.all(agent: agent, cwd: cwd, context: contexts[agentKind] ?? SlashContext())
         self.paneId = paneId
+        // The arguments (servers, models, agents) are read from disk, so the
+        // list fills in a moment later if it has gone stale.
+        reloadContext(agent: agent, cwd: cwd)
     }
 
     func close() {
         paneId = nil
         query = ""
+        path = []
         commands = []
+    }
+
+    /// Opens a command's submenu.
+    func descend(_ command: SlashCommand) {
+        guard command.hasChildren else { return }
+        path.append(command)
+        query = ""
+        selection = 0
+    }
+
+    /// Leaves the current submenu; at the root this cancels the menu.
+    func ascend() {
+        guard !path.isEmpty else {
+            cancel()
+            return
+        }
+        path.removeLast()
+        query = ""
+        selection = 0
     }
 
     func moveSelection(_ delta: Int) {
@@ -97,16 +152,24 @@ final class SlashController: ObservableObject {
         selection = (selection + delta + count) % count
     }
 
-    /// Types the highlighted command into the pane, leaving the cursor after
-    /// it so arguments can follow. `submit` sends it right away.
-    func choose(_ command: SlashCommand? = nil, submit: Bool = false) {
+    /// Runs the highlighted command in the pane — the menu replaces the
+    /// prompt for these, so nothing is left to press Return on. `insert`
+    /// types it instead, for when arguments still have to be written. A
+    /// command with arguments opens its submenu first.
+    func choose(_ command: SlashCommand? = nil, insert: Bool = false) {
         guard let paneId else { return }
         let picked = command ?? (matches.indices.contains(selection) ? matches[selection] : nil)
         guard let picked else {
             cancel()
             return
         }
-        send(text: picked.insertion + (submit ? "" : " "), to: paneId, submit: submit)
+        if picked.hasChildren {
+            descend(picked)
+            return
+        }
+        // A command still expecting free text is typed, never run blind.
+        let typeOnly = insert || !SettingsStore.shared.values.slashRunsCommands || !picked.argumentHint.isEmpty
+        send(text: picked.insertion + (typeOnly ? " " : ""), to: paneId, submit: !typeOnly)
         close()
     }
 
@@ -114,9 +177,65 @@ final class SlashController: ObservableObject {
     /// user wrote is swallowed.
     func cancel() {
         guard let paneId else { return }
-        let literal = "/" + query
+        let literal = (path.last.map { $0.insertion + " " } ?? "/") + query
         close()
         send(text: literal, to: paneId, submit: false)
+    }
+
+    // MARK: - Argument context
+
+    /// Cached per agent, so the menu always opens with its arguments ready.
+    private var contexts: [String: SlashContext] = [:]
+    private var contextLoadedAt: [String: Date] = [:]
+    private static let contextLifetime: TimeInterval = 120
+
+    /// Reads every installed agent's config in the background at launch, so
+    /// the first `/` already knows their servers, models and prompts.
+    func warmContexts() {
+        for host in AgentHosts.installed() {
+            reloadContext(agent: host.id, cwd: nil, force: true)
+        }
+    }
+
+    /// Reads each agent's own config (MCP servers, models, agents, styles)
+    /// off the main thread, plus what Herd itself knows: recent project
+    /// folders and the sessions it can resume.
+    func reloadContext(agent: String?, cwd: String?, force: Bool = false) {
+        let kind = AgentBrand.forAgent(agent)?.id ?? agent ?? ""
+        if !force, let loadedAt = contextLoadedAt[kind], Date().timeIntervalSince(loadedAt) < Self.contextLifetime {
+            return
+        }
+        contextLoadedAt[kind] = Date()
+        let directories = Array(store.groups.map(\.id).prefix(12))
+        let sessions = recentSessions()
+        DispatchQueue.global(qos: .userInitiated).async {
+            var loaded = SlashContext.load(agent: agent, cwd: cwd)
+            loaded.directories = directories
+            loaded.sessions = sessions
+            DispatchQueue.main.async { [weak self] in
+                guard let self, loaded != self.contexts[kind] else { return }
+                self.contexts[kind] = loaded
+                guard self.isOpen, self.agentKind == kind else { return }
+                let keep = self.path.map(\.insertion)
+                self.commands = SlashCommands.all(agent: agent, cwd: cwd, context: loaded)
+                // Follow the open submenu into the rebuilt tree.
+                var rebuilt: [SlashCommand] = []
+                var level = self.commands
+                for insertion in keep {
+                    guard let match = level.first(where: { $0.insertion == insertion }) else { break }
+                    rebuilt.append(match)
+                    level = match.children
+                }
+                self.path = rebuilt
+            }
+        }
+    }
+
+    private func recentSessions() -> [(id: String, label: String)] {
+        store.recovery.resumableSessions().prefix(10).map { record in
+            (record.sessionId ?? "", record.tabLabel.isEmpty ? record.workspaceLabel : record.tabLabel)
+        }
+        .filter { !$0.0.isEmpty }
     }
 
     private func send(text: String, to paneId: String, submit: Bool) {

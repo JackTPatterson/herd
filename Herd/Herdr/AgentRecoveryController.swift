@@ -77,6 +77,11 @@ final class AgentRecoveryController: ObservableObject {
         offered = lost
     }
 
+    /// Past sessions with a known id, newest first, for a resume menu.
+    func resumableSessions() -> [AgentSessionRecord] {
+        AgentRecovery.history(journal: journal.records, current: lastSnapshot)
+    }
+
     /// Opens the panel with recent sessions that aren't running.
     func showHistory() {
         let history = AgentRecovery.history(journal: journal.records, current: lastSnapshot)

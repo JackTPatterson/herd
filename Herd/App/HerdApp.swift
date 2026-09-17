@@ -55,16 +55,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard SettingsStore.shared.values.confirmQuit else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Quit Herd?"
-        alert.informativeText = "Your terminals and agents keep running in herdr. Reopen Herd to pick up where you left off."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        let suppress = NSButton(checkboxWithTitle: "Don't ask again", target: nil, action: nil)
-        alert.accessoryView = suppress
-        let quit = alert.runModal() == .alertFirstButtonReturn
-        if quit, suppress.state == .on { SettingsStore.shared.values.confirmQuit = false }
-        return quit ? .terminateNow : .terminateCancel
+        // Herd's own dialog, so the answer arrives asynchronously.
+        ConfirmCenter.shared.ask(ConfirmCenter.Request(
+            title: "Quit Herd?",
+            message: "Your terminals and agents keep running in herdr. Reopen Herd to pick up where you left off.",
+            confirmTitle: "Quit",
+            suppressTitle: "Don't ask again",
+            onConfirm: { suppress in
+                if suppress { SettingsStore.shared.values.confirmQuit = false }
+                NSApp.reply(toApplicationShouldTerminate: true)
+            },
+            onCancel: { NSApp.reply(toApplicationShouldTerminate: false) }
+        ))
+        return .terminateLater
     }
 }
 
@@ -88,8 +91,8 @@ struct HerdCommands: Commands {
             Button("Marketplace…") { MarketplaceWindow.open() }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
             Divider()
-            Button("Install Claude Subagent Tabs Hook") { ClaudeHookMenu.install() }
-            Button("Remove Claude Subagent Tabs Hook") { ClaudeHookMenu.uninstall() }
+            Button("Install Subagent Tabs Hook") { SubagentHookMenu.install() }
+            Button("Remove Subagent Tabs Hook") { SubagentHookMenu.uninstall() }
         }
         CommandGroup(after: .sidebar) {
             Button("Command Palette") { ui.paletteVisible.toggle() }
@@ -136,38 +139,51 @@ struct HerdCommands: Commands {
     }
 }
 
-/// Menu actions for the Claude Code hook that opens subagent tabs.
-enum ClaudeHookMenu {
+/// Menu actions for the subagent tabs hook, for any agent that has one.
+enum SubagentHookMenu {
     @MainActor
-    static func install() {
+    static func install(_ spec: SubagentHookSpec? = nil) {
         let toasts = ToastCenter.shared
         guard let cli = Bundle.main.url(forAuxiliaryExecutable: "herd-cli")?.path else {
             toasts.fail(nil, "Couldn't install the subagent tabs hook", detail: "herd-cli is missing from the app bundle")
             return
         }
-        let handle = toasts.progress("Installing the Claude subagent tabs hook…")
-        do {
-            let changed = try ClaudeHookInstaller.install(cliPath: cli)
-            toasts.succeed(handle, changed ? "Installed the subagent tabs hook" : "Subagent tabs hook already installed",
-                           detail: "New Claude Code sessions in Herd open a tab per subagent")
-        } catch {
-            toasts.fail(handle, "Couldn't update ~/.claude/settings.json", detail: String(describing: error))
+        let specs = spec.map { [$0] } ?? SubagentHookInstaller.available()
+        guard !specs.isEmpty else {
+            toasts.info("No agent to install into", detail: "Herd found no agent config on this machine")
+            return
         }
+        let handle = toasts.progress("Installing the subagent tabs hook…")
+        var installed: [String] = []
+        for spec in specs {
+            do {
+                _ = try SubagentHookInstaller.install(cliPath: cli, spec: spec)
+                installed.append(spec.displayName)
+            } catch {
+                toasts.fail(handle, "Couldn't update \(spec.file)", detail: String(describing: error))
+                return
+            }
+        }
+        toasts.succeed(handle, "Installed the subagent tabs hook",
+                       detail: "New sessions in \(installed.joined(separator: ", ")) open a tab per subagent")
     }
 
     @MainActor
-    static func uninstall() {
+    static func uninstall(_ spec: SubagentHookSpec? = nil) {
         let toasts = ToastCenter.shared
-        let handle = toasts.progress("Removing the Claude subagent tabs hook…")
-        do {
-            let changed = try ClaudeHookInstaller.uninstall()
-            toasts.succeed(handle, changed ? "Removed the subagent tabs hook" : "Subagent tabs hook was not installed")
-        } catch {
-            toasts.fail(handle, "Couldn't update ~/.claude/settings.json", detail: String(describing: error))
+        let specs = spec.map { [$0] } ?? SubagentHookInstaller.available()
+        let handle = toasts.progress("Removing the subagent tabs hook…")
+        for spec in specs {
+            do {
+                _ = try SubagentHookInstaller.uninstall(spec: spec)
+            } catch {
+                toasts.fail(handle, "Couldn't update \(spec.file)", detail: String(describing: error))
+                return
+            }
         }
+        toasts.succeed(handle, "Removed the subagent tabs hook")
     }
 }
-
 
 /// Opens the Marketplace window from menus and the palette. RootView hands
 /// over SwiftUI's `openWindow`, which is only available inside a view.

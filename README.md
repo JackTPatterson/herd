@@ -27,13 +27,24 @@ Herd runs its own herdr session (`herdr --session herd`) with a managed config
 in `~/Library/Application Support/Herd/herdr-config.toml`, so a plain `herdr`
 elsewhere is unaffected. Workspaces persist in that session across relaunches.
 
-## Claude subagent tabs
+## Subagent tabs
 
-Menu **Herd → Install Claude Subagent Tabs Hook** (or
-`Herd.app/Contents/MacOS/herd-cli install-claude-hook`) adds a `PreToolUse`
-hook for `Agent|Task` to `~/.claude/settings.json` (backup:
-`settings.json.herd-backup`). It does nothing outside Herd panes. Reinstall
-after moving Herd.app, since the hook stores the herd-cli path.
+Menu **Herd → Install Subagent Tabs Hook** (or
+`Herd.app/Contents/MacOS/herd-cli install-subagent-hook [agent]`) adds a
+`PreToolUse` hook for `Agent|Task` to each installed agent's own config —
+`~/.claude/settings.json`, `~/.codex/hooks.json` — keeping a
+`.herd-backup` beside it. Agents share the hook format, so supporting another
+one is a row in `SubagentHookInstaller.specs`. The hook does nothing outside
+Herd panes. Reinstall after moving Herd.app, since it stores the herd-cli path.
+
+## Agents
+
+Nothing in Herd is tied to one vendor. Agents keep their config in
+`~/.<agent>`, with `skills/` and a prompts folder, so Herd discovers whichever
+are installed (Claude Code, Codex, Qwen, Kiro, Copilot, …) and treats them
+alike: the shared library installs into each, the slash menu reads each one's
+own commands, recovery resumes each with its own resume command, and a
+capability flag decides whether Herd drives its `mcp` and `plugin` CLIs.
 
 ## Command palette
 
@@ -109,10 +120,34 @@ named. Also in the palette as **Reload Running Agents**.
 ## Slash menu
 
 Typing `/` at an empty agent prompt opens Herd's own command menu instead of
-the agent's in-terminal list: built-ins for Claude and Codex, your own and the
-project's prompt files, and every installed plugin's commands. ↩ types the
-command into the pane so arguments can follow, ⌘↩ runs it, esc passes through
-what you typed. Settings → Agents & Recovery turns it off.
+the agent's in-terminal list: the agent's built-ins, your own and the
+project's prompt files, and every installed plugin's commands, fuzzy
+searchable. Herd replaces the prompt for these, so ↩ **runs** the command;
+⌘↩ types it without running, and esc passes through what you typed.
+
+Commands with arguments open a submenu filled from what the machine actually
+has: `/mcp` lists your configured servers, `/model` your agent's models (and
+each model's reasoning levels), `/resume` the sessions Herd can resume,
+`/agents` and `/output-style` what's on disk. Prompt files in folders nest as
+`/git` → `amend`, and a plugin with several commands gets its own submenu. →
+opens one, ← goes back. A command that still wants free text is always typed,
+never run blind.
+
+Settings → Agents & Recovery turns the menu, or just the running, off.
+
+## Tab names that follow the work
+
+Agents and shells publish what they're doing as the terminal title, so Herd
+renames a tab to match once the title holds still for a couple of seconds:
+switch task inside a workspace and the tab stops reading as the task you
+started with. A tab you rename yourself is never renamed again, and split
+tabs are left alone. Settings → Agents & Recovery turns it off.
+
+## Confirmations
+
+Herd asks in its own dialog rather than a system alert, themed with the rest
+of the window: quitting, closing idle workspaces, reloading agents, removing
+a plugin, resetting settings, and the plugin install preview all use it.
 
 ## Toasts
 

@@ -45,6 +45,8 @@ struct HerdSettings: Codable, Equatable {
     var paneHistory = false
     var offerRecovery = true
     var slashMenu = true
+    var slashRunsCommands = true
+    var autoNameTabs = true
 
     // MARK: Advanced (herdr)
     var worktreesDirectory = "~/.herdr/worktrees"
@@ -105,6 +107,8 @@ struct HerdSettings: Codable, Equatable {
         paneHistory = value("paneHistory", defaults.paneHistory)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         slashMenu = value("slashMenu", defaults.slashMenu)
+        slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
+        autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)
         checkForHerdrUpdates = value("checkForHerdrUpdates", defaults.checkForHerdrUpdates)
         updateChannel = value("updateChannel", defaults.updateChannel)

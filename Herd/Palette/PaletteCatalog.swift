@@ -77,8 +77,10 @@ enum PaletteCatalog {
             action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { store.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
             action("reloadConfig", "Reload herdr Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadHerdrConfig() },
-            action("installHook", "Install Claude Subagent Tabs Hook", "sparkles", keywords: ["claude", "agent", "setup"]) { ClaudeHookMenu.install() },
-            action("removeHook", "Remove Claude Subagent Tabs Hook", "sparkles", keywords: ["claude", "agent"]) { ClaudeHookMenu.uninstall() },
+            action("installHook", "Install Subagent Tabs Hook", "sparkles",
+                   keywords: ["claude", "codex", "agent", "setup"]) { SubagentHookMenu.install() },
+            action("removeHook", "Remove Subagent Tabs Hook", "sparkles",
+                   keywords: ["claude", "codex", "agent"]) { SubagentHookMenu.uninstall() },
             action("revealConfig", "Reveal herdr Config in Finder", "doc.text.magnifyingglass") {
                 if let path = HerdrSession.make()?.configPath {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -134,13 +136,13 @@ enum PaletteCatalog {
             let count = store.idleWorkspaces.count
             items.append(action("closeIdle", "Close \(count) Idle Workspace\(count == 1 ? "" : "s")…", "xmark.bin.fill",
                                 keywords: ["stale", "cleanup", "unused"]) {
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = "Close \(count) idle workspace\(count == 1 ? "" : "s")?"
-                alert.informativeText = store.idleWorkspaces.map(\.label).prefix(8).joined(separator: ", ")
-                alert.addButton(withTitle: "Close")
-                alert.addButton(withTitle: "Cancel")
-                if alert.runModal() == .alertFirstButtonReturn { store.closeIdleWorkspaces() }
+                ConfirmCenter.shared.ask(
+                    title: "Close \(count) idle workspace\(count == 1 ? "" : "s")?",
+                    message: "Their terminals and any processes running in them will end.",
+                    items: store.idleWorkspaces.map(\.label),
+                    confirmTitle: "Close",
+                    destructive: true
+                ) { _ in store.closeIdleWorkspaces() }
             })
         }
         items.append(PaletteItem(
@@ -286,11 +288,13 @@ enum PaletteCatalog {
                     subtitle: plugin.pluginId, keywords: ["remove", "delete"],
                     icon: .symbol("trash"),
                     effect: .run {
-                        guard PluginDialogs.confirmUninstall(name: plugin.name) else {
-                            ToastCenter.shared.info("Uninstall cancelled", detail: plugin.name)
-                            return
+                        PluginDialogs.confirmUninstall(name: plugin.name) { confirmed in
+                            guard confirmed else {
+                                ToastCenter.shared.info("Uninstall cancelled", detail: plugin.name)
+                                return
+                            }
+                            store.uninstallPlugin(plugin.pluginId, herdrPath: herdr)
                         }
-                        store.uninstallPlugin(plugin.pluginId, herdrPath: herdr)
                     }
                 ))
             } else {
@@ -310,7 +314,7 @@ enum PaletteCatalog {
                 keywords: ["add", "marketplace"],
                 icon: .symbol("square.and.arrow.down"),
                 effect: .prompt(title: "Install Plugin", placeholder: "owner/repo", initial: "") { repo in
-                    store.installPlugin(repo: repo, herdrPath: herdr, confirm: PluginDialogs.confirmInstall(preview:))
+                    store.installPlugin(repo: repo, herdrPath: herdr, confirm: PluginDialogs.confirmInstall)
                 }
             ))
         }
@@ -362,19 +366,17 @@ enum PaletteCatalog {
                 .compactMap { $0 }.joined(separator: " · "),
             icon: .symbol(symbol),
             effect: .run {
-                let alert = NSAlert()
-                alert.messageText = "\(log.pluginId) · \(what)"
-                alert.informativeText = """
-                Status: \(log.status)\(exit.map { " (\($0))" } ?? "")
-                Started: \(started.formatted())
+                ConfirmCenter.shared.show(
+                    title: "\(log.pluginId) · \(what)",
+                    message: "Status: \(log.status)\(exit.map { " (\($0))" } ?? "") · started \(started.formatted())",
+                    detail: """
+                    stdout:
+                    \(log.stdout?.isEmpty == false ? log.stdout! : "(empty)")
 
-                stdout:
-                \(log.stdout?.isEmpty == false ? log.stdout! : "(empty)")
-
-                stderr:
-                \(log.stderr?.isEmpty == false ? log.stderr! : "(empty)")\(log.error.map { "\n\nerror: \($0)" } ?? "")
-                """
-                alert.runModal()
+                    stderr:
+                    \(log.stderr?.isEmpty == false ? log.stderr! : "(empty)")\(log.error.map { "\n\nerror: \($0)" } ?? "")
+                    """
+                )
             }
         )
     }
@@ -427,33 +429,27 @@ enum ProjectDirectories {
 @MainActor
 enum PluginDialogs {
     /// Shows herdr's install preview; returns true when the user confirms.
-    static func confirmInstall(preview: String) -> Bool {
+    static func confirmInstall(preview: String, answer: @escaping (Bool) -> Void) {
         let name = PluginCLI.previewField("name", in: preview) ?? "this plugin"
-        let alert = NSAlert()
-        alert.messageText = "Install \(name)?"
-        alert.informativeText = "Plugins run as your user and are not sandboxed. Review the commands herdr will run:"
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 480, height: 260))
-        text.string = preview
-        text.isEditable = false
-        text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        text.textContainerInset = NSSize(width: 6, height: 6)
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 260))
-        scroll.documentView = text
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        alert.accessoryView = scroll
-        alert.addButton(withTitle: "Install")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        ConfirmCenter.shared.ask(ConfirmCenter.Request(
+            title: "Install \(name)?",
+            message: "Plugins run as your user and are not sandboxed. Review the commands herdr will run:",
+            detail: preview,
+            confirmTitle: "Install",
+            onConfirm: { _ in answer(true) },
+            onCancel: { answer(false) }
+        ))
     }
 
-    static func confirmUninstall(name: String) -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Uninstall \(name)?"
-        alert.informativeText = "herdr removes the plugin's files. Its config directory is kept."
-        alert.addButton(withTitle: "Uninstall")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+    static func confirmUninstall(name: String, answer: @escaping (Bool) -> Void) {
+        ConfirmCenter.shared.ask(ConfirmCenter.Request(
+            title: "Uninstall \(name)?",
+            message: "herdr removes the plugin's files. Its config directory is kept.",
+            confirmTitle: "Uninstall",
+            destructive: true,
+            onConfirm: { _ in answer(true) },
+            onCancel: { answer(false) }
+        ))
     }
 }
+

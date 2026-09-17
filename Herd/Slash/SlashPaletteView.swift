@@ -9,15 +9,16 @@ struct SlashPaletteView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text("/")
+                Text(slash.breadcrumb)
                     .font(Theme.monoFont)
                     .foregroundStyle(Theme.accent)
+                    .lineLimit(1)
                 TextField("", text: $slash.query)
                     .textFieldStyle(.plain)
                     .font(Theme.monoFont)
                     .foregroundStyle(Theme.textPrimary)
                     .focused($focused)
-                    .onSubmit { slash.choose(submit: NSEvent.modifierFlags.contains(.command)) }
+                    .onSubmit { slash.choose() }
                 Text(slash.agentName)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
@@ -47,9 +48,13 @@ struct SlashPaletteView: View {
 
             Rectangle().fill(Theme.divider).frame(height: 1)
             HStack(spacing: 10) {
-                Hint(keys: "↩", label: "Insert")
-                Hint(keys: "⌘↩", label: "Run")
-                Hint(keys: "esc", label: "Keep typing")
+                Hint(keys: "↩", label: slash.selectedHasChildren ? "Open" : (slash.selectedRuns ? "Run" : "Type"))
+                Hint(keys: "⌘↩", label: "Type only")
+                if slash.path.isEmpty {
+                    Hint(keys: "esc", label: "Keep typing")
+                } else {
+                    Hint(keys: "←", label: "Back")
+                }
                 Spacer()
                 Text("\(slash.matches.count)")
                     .font(Theme.captionFont)
@@ -71,7 +76,9 @@ struct SlashPaletteView: View {
                 isActive: { slash.isOpen },
                 up: { slash.moveSelection(-1) },
                 down: { slash.moveSelection(1) },
-                submitRunning: { slash.choose(submit: true) }
+                submitRunning: { slash.choose(insert: true) },
+                right: { slash.openSelected() },
+                back: { slash.query.isEmpty ? slash.ascend() : nil }
             )
         }
     }
@@ -83,7 +90,8 @@ private struct CommandRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("/" + command.name)
+            // Arguments read as values, not commands: no leading slash.
+            Text(command.origin == .argument ? command.name : "/" + command.name)
                 .font(Theme.monoFont)
                 .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
@@ -93,7 +101,20 @@ private struct CommandRow: View {
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
+            if !command.argumentHint.isEmpty {
+                Text(command.argumentHint)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary.opacity(0.8))
+            }
             Spacer(minLength: 4)
+            if command.hasChildren {
+                Text("\(command.children.count)")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
             if !command.origin.label.isEmpty {
                 Text(command.origin.label)
                     .font(Theme.captionFont)
@@ -138,15 +159,20 @@ private struct KeyCatcher: NSViewRepresentable {
     let up: () -> Void
     let down: () -> Void
     let submitRunning: () -> Void
+    /// → opens the highlighted submenu, ← (or ⌫ on an empty query) goes back.
+    let right: () -> Void
+    let back: () -> Void
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        context.coordinator.install(isActive: isActive, up: up, down: down, submitRunning: submitRunning)
+        context.coordinator.install(isActive: isActive, up: up, down: down, submitRunning: submitRunning,
+                                    right: right, back: back)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.install(isActive: isActive, up: up, down: down, submitRunning: submitRunning)
+        context.coordinator.install(isActive: isActive, up: up, down: down, submitRunning: submitRunning,
+                                    right: right, back: back)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -157,12 +183,23 @@ private struct KeyCatcher: NSViewRepresentable {
         private var up: (() -> Void)?
         private var down: (() -> Void)?
         private var submitRunning: (() -> Void)?
+        private var right: (() -> Void)?
+        private var back: (() -> Void)?
 
-        func install(isActive: @escaping () -> Bool, up: @escaping () -> Void, down: @escaping () -> Void, submitRunning: @escaping () -> Void) {
+        func install(
+            isActive: @escaping () -> Bool,
+            up: @escaping () -> Void,
+            down: @escaping () -> Void,
+            submitRunning: @escaping () -> Void,
+            right: @escaping () -> Void,
+            back: @escaping () -> Void
+        ) {
             self.isActive = isActive
             self.up = up
             self.down = down
             self.submitRunning = submitRunning
+            self.right = right
+            self.back = back
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self, self.isActive?() == true else { return event }
@@ -174,6 +211,11 @@ private struct KeyCatcher: NSViewRepresentable {
                         self.submitRunning?()
                         return nil
                     }
+                    return event
+                case 124: self.right?(); return nil
+                case 123: self.back?(); return nil
+                case 51: // Backspace on an empty query leaves the submenu.
+                    self.back?()
                     return event
                 case 48: // Tab completes like ↩ without running.
                     return event

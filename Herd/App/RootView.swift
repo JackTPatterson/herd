@@ -9,6 +9,7 @@ struct RootView: View {
     @StateObject private var palette = PaletteModel()
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var confirmations = ConfirmCenter.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -43,14 +44,30 @@ struct RootView: View {
         }
         .onAppear {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
+            slash.warmContexts()
             #if DEBUG
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == MarketplaceWindow.id {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
             }
-            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "slash" {
+            if let window = ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"], window.hasPrefix("slash") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     slash.open(paneId: store.snapshot.panes.first?.paneId ?? "", agent: "claude")
+                    // "slash:model" opens that command's submenu too.
+                    if let name = window.split(separator: ":").dropFirst().first,
+                       let command = slash.commands.first(where: { $0.name == name }) {
+                        slash.descend(command)
+                    }
+                }
+            }
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "confirm" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    ConfirmCenter.shared.ask(
+                        title: "Quit Herd?",
+                        message: "Your terminals and agents keep running in herdr. Reopen Herd to pick up where you left off.",
+                        confirmTitle: "Quit",
+                        suppressTitle: "Don't ask again"
+                    ) { _ in }
                 }
             }
             #endif
@@ -71,7 +88,9 @@ struct RootView: View {
         }
         .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: slash.isOpen)
         .onChange(of: slash.isOpen) { _, open in DebugSnapshot.overlayVisible = open }
+        .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlayVisible = id != nil }
         .onChange(of: store.snapshot.focusedPaneId) { _, _ in slash.resetTyping() }
+        .overlay { ConfirmDialog(center: confirmations) }
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }

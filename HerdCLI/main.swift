@@ -2,10 +2,13 @@ import Foundation
 
 // herd-cli: helpers that run inside herdr panes.
 //
-//   herd-cli hook claude             Claude Code PreToolUse hook (stdin JSON)
-//   herd-cli agent-watch …           live subagent transcript viewer
-//   herd-cli install-claude-hook     add the hook to ~/.claude/settings.json
-//   herd-cli uninstall-claude-hook   remove it
+//   herd-cli hook <agent>              subagent hook for that agent (stdin JSON)
+//   herd-cli agent-watch …             live subagent transcript viewer
+//   herd-cli install-subagent-hook …   add the hook to an agent's config
+//   herd-cli uninstall-subagent-hook … remove it
+//
+// <agent> is an agent id, e.g. claude or codex; omitting it means every
+// agent installed on this machine.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -22,15 +25,22 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+/// One agent's hook config, or every installed agent's when unnamed.
+func hookSpecs(_ agent: String?) -> [SubagentHookSpec] {
+    guard let agent, !agent.isEmpty else { return SubagentHookInstaller.available() }
+    guard let spec = SubagentHookInstaller.spec(agent) else { fail("unknown agent: \(agent)") }
+    return [spec]
+}
+
 var executablePath: String {
     URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
 }
 
 switch arguments.first {
 case "hook":
-    guard arguments.dropFirst().first == "claude" else { fail("usage: herd-cli hook claude") }
+    guard let agent = arguments.dropFirst().first, !agent.isEmpty else { fail("usage: herd-cli hook <agent>") }
     let input = FileHandle.standardInput.readDataToEndOfFile()
-    SubagentHook.handleClaudePreToolUse(
+    SubagentHook.handlePreToolUse(
         payload: input,
         environment: environment,
         cliPath: executablePath
@@ -51,22 +61,29 @@ case "agent-watch":
         environment: environment
     )
 
-case "install-claude-hook":
-    do {
-        let changed = try ClaudeHookInstaller.install(cliPath: executablePath)
-        print(changed ? "Installed Herd subagent hook in ~/.claude/settings.json" : "Herd subagent hook already installed")
-    } catch {
-        fail("install failed: \(error)")
+case "install-subagent-hook", "install-claude-hook":
+    let specs = hookSpecs(arguments.dropFirst().first)
+    guard !specs.isEmpty else { fail("no agent config found to install into") }
+    for spec in specs {
+        do {
+            let changed = try SubagentHookInstaller.install(cliPath: executablePath, spec: spec)
+            print(changed ? "Installed Herd subagent hook in \(spec.file)" : "Already installed in \(spec.file)")
+        } catch {
+            fail("install failed for \(spec.hostId): \(error)")
+        }
     }
 
-case "uninstall-claude-hook":
-    do {
-        let changed = try ClaudeHookInstaller.uninstall()
-        print(changed ? "Removed Herd subagent hook" : "Herd subagent hook was not installed")
-    } catch {
-        fail("uninstall failed: \(error)")
+case "uninstall-subagent-hook", "uninstall-claude-hook":
+    let specs = hookSpecs(arguments.dropFirst().first)
+    for spec in specs {
+        do {
+            let changed = try SubagentHookInstaller.uninstall(spec: spec)
+            print(changed ? "Removed Herd subagent hook from \(spec.file)" : "Not installed in \(spec.file)")
+        } catch {
+            fail("uninstall failed for \(spec.hostId): \(error)")
+        }
     }
 
 default:
-    fail("usage: herd-cli <hook claude|agent-watch|install-claude-hook|uninstall-claude-hook>")
+    fail("usage: herd-cli <hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]>")
 }

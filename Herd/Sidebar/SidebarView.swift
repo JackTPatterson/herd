@@ -318,15 +318,13 @@ struct IdleDock: View {
 
     private func confirmCloseAll() {
         let count = store.idleWorkspaces.count
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Close \(count) idle workspace\(count == 1 ? "" : "s")?"
-        alert.informativeText = "Their terminals and any processes running in them will end."
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn {
-            store.closeIdleWorkspaces()
-        }
+        ConfirmCenter.shared.ask(
+            title: "Close \(count) idle workspace\(count == 1 ? "" : "s")?",
+            message: "Their terminals and any processes running in them will end.",
+            items: store.idleWorkspaces.map(\.label),
+            confirmTitle: "Close",
+            destructive: true
+        ) { _ in store.closeIdleWorkspaces() }
     }
 
     static func thresholdLabel(_ seconds: TimeInterval) -> String {

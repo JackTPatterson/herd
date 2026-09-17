@@ -55,7 +55,7 @@ enum SubagentHook {
         return label.count > maxLabelLength ? String(label.prefix(maxLabelLength - 1)) + "…" : label
     }
 
-    static func handleClaudePreToolUse(payload data: Data, environment: [String: String], cliPath: String) {
+    static func handlePreToolUse(payload data: Data, environment: [String: String], cliPath: String) {
         guard environment["HERD_SUBAGENT_TABS"] != "0",
               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let socketPath = environment["HERDR_SOCKET_PATH"], !socketPath.isEmpty,
@@ -121,51 +121,82 @@ struct PaneAgentReporter {
     }
 }
 
-/// Adds/removes Herd's PreToolUse hook in `~/.claude/settings.json`.
-enum ClaudeHookInstaller {
-    static let matcher = "Agent|Task"
+/// Where an agent keeps its hook config. Every agent Herd supports uses the
+/// same shape — a `hooks` map of event name to matcher entries — so one
+/// installer serves them all; adding an agent is a row in `specs`.
+struct SubagentHookSpec: Identifiable, Equatable {
+    let hostId: String
+    /// The file holding the hooks map.
+    let file: String
+    /// The file's own name for a backup Herd writes before editing.
+    let backupName: String
+    let event: String
+    /// Tool names that spawn a subagent.
+    let matcher: String
+
+    var id: String { hostId }
+    var displayName: String { AgentBrand.displayNames[hostId] ?? hostId }
+    var url: URL { URL(fileURLWithPath: file) }
+}
+
+/// Adds and removes Herd's subagent hook in each agent's own config.
+enum SubagentHookInstaller {
+    static func specs(home: String = NSHomeDirectory()) -> [SubagentHookSpec] {
+        [
+            SubagentHookSpec(hostId: "claude", file: "\(home)/.claude/settings.json",
+                             backupName: "settings.json.herd-backup", event: "PreToolUse", matcher: "Agent|Task"),
+            SubagentHookSpec(hostId: "codex", file: "\(home)/.codex/hooks.json",
+                             backupName: "hooks.json.herd-backup", event: "PreToolUse", matcher: "Agent|Task"),
+        ]
+    }
+
+    /// Specs for the agents actually installed on this machine.
+    static func available(home: String = NSHomeDirectory()) -> [SubagentHookSpec] {
+        let installed = Set(AgentHosts.installed(home: home).map(\.id))
+        return specs(home: home).filter { installed.contains($0.hostId) }
+    }
+
+    static func spec(_ hostId: String, home: String = NSHomeDirectory()) -> SubagentHookSpec? {
+        specs(home: home).first { $0.hostId == hostId }
+    }
 
     /// Whether a hook command is one Herd installed (any herd-cli path).
     static func isHerdHookCommand(_ command: String) -> Bool {
-        command.hasSuffix(" hook claude") && command.contains("herd-cli")
+        command.contains("herd-cli") && command.range(of: " hook [a-z_-]+$", options: .regularExpression) != nil
     }
 
-    static func isInstalled() -> Bool {
-        guard let data = try? Data(contentsOf: settingsURL),
+    static func isInstalled(_ spec: SubagentHookSpec) -> Bool {
+        guard let data = try? Data(contentsOf: spec.url),
               let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = (settings["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]] else { return false }
+              let entries = (settings["hooks"] as? [String: Any])?[spec.event] as? [[String: Any]] else { return false }
         return entries.contains { entry in
             (entry["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String).map(isHerdHookCommand) ?? false }
         }
     }
 
-    static var settingsURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
-    }
-
-    static func hookCommand(cliPath: String) -> String {
-        "'\(cliPath.replacingOccurrences(of: "'", with: "'\"'\"'"))' hook claude"
+    static func hookCommand(cliPath: String, hostId: String) -> String {
+        "'\(cliPath.replacingOccurrences(of: "'", with: "'\"'\"'"))' hook \(hostId)"
     }
 
     /// Returns settings with Herd's hook present (replacing an older path).
-    static func installing(into settings: [String: Any], cliPath: String) -> [String: Any] {
-        var settings = removing(from: settings)
+    static func installing(into settings: [String: Any], cliPath: String, spec: SubagentHookSpec) -> [String: Any] {
+        var settings = removing(from: settings, spec: spec)
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
-        var preToolUse = hooks["PreToolUse"] as? [[String: Any]] ?? []
-        preToolUse.append([
-            "matcher": matcher,
-            "hooks": [["type": "command", "command": hookCommand(cliPath: cliPath), "timeout": 5]],
+        var entries = hooks[spec.event] as? [[String: Any]] ?? []
+        entries.append([
+            "matcher": spec.matcher,
+            "hooks": [["type": "command", "command": hookCommand(cliPath: cliPath, hostId: spec.hostId), "timeout": 5]],
         ])
-        hooks["PreToolUse"] = preToolUse
+        hooks[spec.event] = entries
         settings["hooks"] = hooks
         return settings
     }
 
-    static func removing(from settings: [String: Any]) -> [String: Any] {
+    static func removing(from settings: [String: Any], spec: SubagentHookSpec) -> [String: Any] {
         var settings = settings
         guard var hooks = settings["hooks"] as? [String: Any],
-              let preToolUse = hooks["PreToolUse"] as? [[String: Any]] else { return settings }
-        let kept = preToolUse.compactMap { entry -> [String: Any]? in
+              let entries = hooks[spec.event] as? [[String: Any]] else { return settings }
+        let kept = entries.compactMap { entry -> [String: Any]? in
             var entry = entry
             let inner = (entry["hooks"] as? [[String: Any]] ?? []).filter {
                 !(($0["command"] as? String).map(isHerdHookCommand) ?? false)
@@ -174,38 +205,38 @@ enum ClaudeHookInstaller {
             entry["hooks"] = inner
             return entry
         }
-        if kept.isEmpty { hooks.removeValue(forKey: "PreToolUse") } else { hooks["PreToolUse"] = kept }
+        if kept.isEmpty { hooks.removeValue(forKey: spec.event) } else { hooks[spec.event] = kept }
         settings["hooks"] = hooks
         return settings
     }
 
     @discardableResult
-    static func install(cliPath: String) throws -> Bool {
-        let current = try load()
-        let updated = installing(into: current, cliPath: cliPath)
+    static func install(cliPath: String, spec: SubagentHookSpec) throws -> Bool {
+        let current = try load(spec)
+        let updated = installing(into: current, cliPath: cliPath, spec: spec)
         guard !NSDictionary(dictionary: current).isEqual(to: updated) else { return false }
-        try save(updated)
+        try save(updated, spec: spec)
         return true
     }
 
     @discardableResult
-    static func uninstall() throws -> Bool {
-        let current = try load()
-        let updated = removing(from: current)
+    static func uninstall(spec: SubagentHookSpec) throws -> Bool {
+        let current = try load(spec)
+        let updated = removing(from: current, spec: spec)
         guard !NSDictionary(dictionary: current).isEqual(to: updated) else { return false }
-        try save(updated)
+        try save(updated, spec: spec)
         return true
     }
 
-    private static func load() throws -> [String: Any] {
-        guard let data = try? Data(contentsOf: settingsURL) else { return [:] }
+    private static func load(_ spec: SubagentHookSpec) throws -> [String: Any] {
+        guard let data = try? Data(contentsOf: spec.url) else { return [:] }
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
-    private static func save(_ settings: [String: Any]) throws {
-        let url = settingsURL
+    private static func save(_ settings: [String: Any], spec: SubagentHookSpec) throws {
+        let url = spec.url
         if FileManager.default.fileExists(atPath: url.path) {
-            let backup = url.deletingLastPathComponent().appendingPathComponent("settings.json.herd-backup")
+            let backup = url.deletingLastPathComponent().appendingPathComponent(spec.backupName)
             try? FileManager.default.removeItem(at: backup)
             try? FileManager.default.copyItem(at: url, to: backup)
         }

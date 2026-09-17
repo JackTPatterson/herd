@@ -125,7 +125,7 @@ final class MarketplaceStore: ObservableObject {
     func loadServers() {
         guard !loading.contains(.mcp) else { return }
         loading.insert(.mcp)
-        let hosts = self.hosts
+        let hosts = self.hosts.filter(\.supportsMCP)
         run(hosts.map { "\($0.cli) mcp list" }, timeout: 120) { [weak self] outputs in
             guard let self else { return }
             let lists = zip(hosts, outputs).map { host, output in
@@ -214,6 +214,7 @@ final class MarketplaceStore: ObservableObject {
 
     /// Adds an MCP server from one definition, in each host's own syntax.
     func addServer(name: String, command: String, into hosts: [AgentHost]) {
+        let hosts = hosts.filter(\.supportsMCP)
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let isURL = trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
         let commands = hosts.map { host -> String in
@@ -234,7 +235,7 @@ final class MarketplaceStore: ObservableObject {
 
     func removeServer(_ entry: MarketplaceEntry, from hosts: [AgentHost]) {
         perform(
-            hosts.map { "\($0.cli) mcp remove \(PluginCLI.quote(entry.identifier))" },
+            hosts.filter(\.supportsMCP).map { "\($0.cli) mcp remove \(PluginCLI.quote(entry.identifier))" },
             progress: "Removing \(entry.name)…",
             success: "Removed MCP server \(entry.name)",
             failure: "Couldn't remove \(entry.name)",
@@ -342,20 +343,27 @@ final class MarketplaceStore: ObservableObject {
             pendingReload = false
             return
         }
-        if confirm {
-            let working = reloadable.filter { $0.agent.agentStatus == .working }.count
-            let alert = NSAlert()
-            alert.messageText = "Reload \(reloadable.count) running agent\(reloadable.count == 1 ? "" : "s")?"
-            var lines = ["Each one restarts with --resume, so the conversation is kept."]
-            if working > 0 { lines.append("\(working) \(working == 1 ? "is" : "are") working right now and will be interrupted.") }
-            if !blocked.isEmpty { lines.append("Skipping \(blocked.count): \(blocked.map(\.reason).joined(separator: ", ")).") }
-            alert.informativeText = lines.joined(separator: "\n")
-            alert.addButton(withTitle: "Reload")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard confirm else {
+            pendingReload = false
+            recovery.reload(reloadable)
+            return
         }
-        pendingReload = false
-        recovery.reload(reloadable)
+        let working = reloadable.filter { $0.agent.agentStatus == .working }.count
+        var lines = ["Each one restarts with --resume, so the conversation is kept."]
+        if working > 0 { lines.append("\(working) \(working == 1 ? "is" : "are") working right now and will be interrupted.") }
+        if !blocked.isEmpty { lines.append("Skipping \(blocked.count): \(blocked.map(\.reason).joined(separator: ", ")).") }
+        ConfirmCenter.shared.ask(
+            title: "Reload \(reloadable.count) running agent\(reloadable.count == 1 ? "" : "s")?",
+            message: lines.joined(separator: " "),
+            items: reloadable.map { record in
+                let name = AgentBrand.forAgent(record.agent.agent)?.displayName ?? "agent"
+                return record.record.tabLabel.isEmpty ? name : "\(name) · \(record.record.tabLabel)"
+            },
+            confirmTitle: "Reload"
+        ) { [weak self] _ in
+            self?.pendingReload = false
+            self?.recovery.reload(reloadable)
+        }
     }
 
     private func markPendingReload(_ affectsAgents: Bool = true) {

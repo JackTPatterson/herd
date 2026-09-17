@@ -310,7 +310,11 @@ private struct TerminalSettings: View {
 private struct AgentSettings: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var integrations: HerdrIntegrations
-    @State private var hookInstalled = ClaudeHookInstaller.isInstalled()
+    @State private var hookInstalled: Set<String> = []
+
+    private func refreshHooks() {
+        hookInstalled = Set(SubagentHookInstaller.available().filter(SubagentHookInstaller.isInstalled).map(\.hostId))
+    }
 
     var body: some View {
         SettingsGroup(title: "Notifications") {
@@ -356,6 +360,20 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Run commands from the menu",
+                detail: "Picking a command submits it to the agent. Off types it into the prompt instead. Commands that take arguments are always typed."
+            ) {
+                Toggle("", isOn: $settings.values.slashRunsCommands).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Name tabs after their work",
+                detail: "Tabs follow what their pane reports it is doing, so a tab stops reading as the task you started with. A tab you rename yourself keeps its name."
+            ) {
+                Toggle("", isOn: $settings.values.autoNameTabs).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Restore recent terminal output",
                 detail: "Saves pane contents so they reappear after a restart. Output can include secrets."
             ) {
@@ -376,20 +394,27 @@ private struct AgentSettings: View {
                 IntegrationRow(status: status) { integrations.install(status.agent) }
             }
         }
-        SettingsGroup(title: "Claude Code") {
-            SettingsRow(
-                title: "Subagent tabs",
-                detail: "Open a named background tab showing each subagent's live transcript."
-            ) {
-                Button(hookInstalled ? "Remove Hook" : "Install Hook") {
-                    if hookInstalled { ClaudeHookMenu.uninstall() } else { ClaudeHookMenu.install() }
-                    hookInstalled = ClaudeHookInstaller.isInstalled()
+        SettingsGroup(title: "Subagent tabs") {
+            ForEach(Array(SubagentHookInstaller.available().enumerated()), id: \.element.id) { index, spec in
+                if index > 0 { SettingsDivider() }
+                SettingsRow(
+                    title: spec.displayName,
+                    detail: "Open a named background tab showing each subagent's live transcript. Hook lives in \(spec.file.replacingOccurrences(of: NSHomeDirectory(), with: "~"))."
+                ) {
+                    Button(hookInstalled.contains(spec.hostId) ? "Remove Hook" : "Install Hook") {
+                        if hookInstalled.contains(spec.hostId) {
+                            SubagentHookMenu.uninstall(spec)
+                        } else {
+                            SubagentHookMenu.install(spec)
+                        }
+                        refreshHooks()
+                    }
                 }
             }
         }
         .onAppear {
             integrations.refresh()
-            hookInstalled = ClaudeHookInstaller.isInstalled()
+            refreshHooks()
         }
     }
 }
@@ -518,11 +543,12 @@ private struct AdvancedSettings: View {
         SettingsGroup(title: "Reset") {
             SettingsRow(title: "Restore default settings", detail: "Motion, pins, and the idle threshold are kept.") {
                 Button("Reset…") {
-                    let alert = NSAlert()
-                    alert.messageText = "Restore default settings?"
-                    alert.addButton(withTitle: "Reset")
-                    alert.addButton(withTitle: "Cancel")
-                    if alert.runModal() == .alertFirstButtonReturn {
+                    ConfirmCenter.shared.ask(
+                        title: "Restore default settings?",
+                        message: "Appearance, terminal, agent, and advanced settings go back to their defaults.",
+                        confirmTitle: "Reset",
+                        destructive: true
+                    ) { _ in
                         settings.resetToDefaults()
                         ToastCenter.shared.info("Settings restored to defaults")
                     }

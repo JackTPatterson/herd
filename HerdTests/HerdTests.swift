@@ -145,21 +145,47 @@ final class SubagentTabTests: XCTestCase {
     }
 
     func testHookInstallerIsIdempotentAndPreservesOtherHooks() throws {
+        let spec = try XCTUnwrap(SubagentHookInstaller.spec("claude"))
         let existing: [String: Any] = [
             "model": "opus",
             "hooks": ["PreToolUse": [["matcher": "Bash", "hooks": [["type": "command", "command": "guard.sh"]]]]],
         ]
-        let once = ClaudeHookInstaller.installing(into: existing, cliPath: "/A/herd-cli")
-        let twice = ClaudeHookInstaller.installing(into: once, cliPath: "/B/herd-cli")
+        let once = SubagentHookInstaller.installing(into: existing, cliPath: "/A/herd-cli", spec: spec)
+        let twice = SubagentHookInstaller.installing(into: once, cliPath: "/B/herd-cli", spec: spec)
         let entries = try XCTUnwrap((twice["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]])
         XCTAssertEqual(entries.count, 2)
         let commands = entries.flatMap { ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String } }
         XCTAssertEqual(commands, ["guard.sh", "'/B/herd-cli' hook claude"])
         XCTAssertEqual(twice["model"] as? String, "opus")
 
-        let removed = ClaudeHookInstaller.removing(from: twice)
+        let removed = SubagentHookInstaller.removing(from: twice, spec: spec)
         let remaining = (removed["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]]
         XCTAssertEqual(remaining?.count, 1)
+    }
+
+    func testEveryAgentGetsTheHookInItsOwnConfigFile() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let specs = SubagentHookInstaller.specs(home: home)
+        XCTAssertEqual(specs.map(\.hostId), ["claude", "codex"])
+        // Each writes into that agent's own file, never a shared one.
+        XCTAssertEqual(specs.map(\.file), [home + "/.claude/settings.json", home + "/.codex/hooks.json"])
+
+        let codex = try XCTUnwrap(specs.last)
+        XCTAssertTrue(try SubagentHookInstaller.install(cliPath: "/x/herd-cli", spec: codex))
+        XCTAssertTrue(SubagentHookInstaller.isInstalled(codex))
+        // Installing twice changes nothing; the agent id is in the command.
+        XCTAssertFalse(try SubagentHookInstaller.install(cliPath: "/x/herd-cli", spec: codex))
+        let written = try String(contentsOfFile: codex.file, encoding: .utf8)
+        XCTAssertTrue(written.contains("hook codex"))
+
+        XCTAssertTrue(try SubagentHookInstaller.uninstall(spec: codex))
+        XCTAssertFalse(SubagentHookInstaller.isInstalled(codex))
+        // Only agents present on the machine are offered: writing the file
+        // above created ~/.codex, so now Codex is there and Claude isn't.
+        XCTAssertEqual(SubagentHookInstaller.available(home: home).map(\.hostId), ["codex"])
+        let bare = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        XCTAssertTrue(SubagentHookInstaller.available(home: bare).isEmpty)
     }
 }
 
@@ -506,13 +532,41 @@ final class MarketplaceCatalogTests: XCTestCase {
     }
 }
 
+final class AgentHostsTests: XCTestCase {
+    func testHostsAreDiscoveredByConventionNotHardcoded() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        // An agent Herd ships no special knowledge of still counts.
+        try FileManager.default.createDirectory(atPath: home + "/.qwen/skills", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: home + "/.claude/plugins", withIntermediateDirectories: true)
+
+        let installed = AgentHosts.installed(home: home)
+        XCTAssertEqual(installed.map(\.id), ["claude", "qwen"])
+        let qwen = try XCTUnwrap(installed.last)
+        XCTAssertEqual(qwen.skillsDirectory, home + "/.qwen/skills")
+        // Agents other than Claude name the folder "prompts".
+        XCTAssertEqual(qwen.promptPath("review"), home + "/.qwen/prompts/review.md")
+        XCTAssertFalse(qwen.supportsPlugins)
+        XCTAssertFalse(qwen.supportsMCP)
+
+        let claude = try XCTUnwrap(installed.first)
+        XCTAssertEqual(claude.promptPath("review"), home + "/.claude/commands/review.md")
+        XCTAssertTrue(claude.supportsPlugins)
+        XCTAssertTrue(claude.supportsMCP)
+
+        // An existing folder wins over the default name.
+        try FileManager.default.createDirectory(atPath: home + "/.codex/commands", withIntermediateDirectories: true)
+        XCTAssertEqual(AgentHosts.host("codex", home: home)?.promptsDirectory, home + "/.codex/commands")
+    }
+}
+
 final class AgentLibraryTests: XCTestCase {
     private var home = ""
     private var hosts: [AgentHost] = []
 
     override func setUpWithError() throws {
         home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
-        hosts = AgentHosts.all(home: home)
+        hosts = ["claude", "codex"].compactMap { AgentHosts.host($0, home: home) }
         for host in hosts {
             try FileManager.default.createDirectory(atPath: host.skillsDirectory, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(atPath: host.promptsDirectory, withIntermediateDirectories: true)
@@ -602,12 +656,15 @@ final class SlashCommandTests: XCTestCase {
         home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         let host = AgentHosts.host("claude", home: home)!
         try FileManager.default.createDirectory(atPath: host.promptsDirectory + "/git", withIntermediateDirectories: true)
-        try "---\ndescription: Review the diff\n---\nReview it.".write(toFile: host.promptPath("review-diff"), atomically: true, encoding: .utf8)
+        try "---\ndescription: Review the diff\nargument-hint: <base>\n---\nReview it."
+            .write(toFile: host.promptPath("review-diff"), atomically: true, encoding: .utf8)
         try "# Amend\n\nAmend the last commit.".write(toFile: host.promptsDirectory + "/git/amend.md", atomically: true, encoding: .utf8)
+        try "# Rebase\n\nRebase onto main.".write(toFile: host.promptsDirectory + "/git/rebase.md", atomically: true, encoding: .utf8)
         // A plugin's commands live under its cached version folder.
         let pluginCommands = "\(host.home)/plugins/cache/official/formatter/1.2.0/commands"
         try FileManager.default.createDirectory(atPath: pluginCommands, withIntermediateDirectories: true)
         try "---\ndescription: Format the repo\n---\n".write(toFile: pluginCommands + "/format.md", atomically: true, encoding: .utf8)
+        try "---\ndescription: Check formatting\n---\n".write(toFile: pluginCommands + "/check.md", atomically: true, encoding: .utf8)
     }
 
     override func tearDown() {
@@ -625,9 +682,8 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertEqual(byName["compact"]?.origin, .builtIn)
         XCTAssertEqual(byName["review-diff"]?.origin, .user)
         XCTAssertEqual(byName["review-diff"]?.summary, "Review the diff")
-        XCTAssertEqual(byName["git:amend"]?.summary, "Amend the last commit.")
+        XCTAssertEqual(byName["review-diff"]?.argumentHint, "<base>")
         XCTAssertEqual(byName["ship"]?.origin, .project)
-        XCTAssertEqual(byName["format"]?.origin, .plugin("formatter"))
         XCTAssertEqual(byName["review-diff"]?.insertion, "/review-diff")
 
         // Codex gets its own built-ins, not Claude's.
@@ -636,13 +692,124 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertFalse(codex.contains("vim"))
     }
 
-    func testMatchingPrefersPrefixMatchesAndSearchesSummaries() {
+    func testNamespacedPromptsAndMultiCommandPluginsBecomeSubmenus() {
+        let commands = SlashCommands.all(agent: "claude", cwd: nil, home: home)
+        let git = commands.first { $0.name == "git" }
+        XCTAssertEqual(git?.children.map(\.name), ["amend", "rebase"])
+        // A child keeps the full text the agent expects.
+        XCTAssertEqual(git?.children.first?.insertion, "/git:amend")
+        XCTAssertEqual(git?.summary, "2 commands")
+
+        let formatter = commands.first { $0.name == "formatter" }
+        XCTAssertEqual(formatter?.children.map(\.name).sorted(), ["check", "format"])
+        XCTAssertEqual(formatter?.origin, .plugin("formatter"))
+        XCTAssertFalse(commands.contains { $0.name == "format" })
+    }
+
+    func testBuiltInsCarryTheMachinesRealArguments() {
+        var context = SlashContext()
+        context.mcpServers = ["pencil", "firecrawl"]
+        context.models = [("gpt-6-astra", "Most capable", ["low", "high"])]
+        context.sessions = [(id: "abc-123", label: "refactor")]
+
+        let codex = SlashCommands.all(agent: "codex", cwd: nil, context: context, home: home)
+        let mcp = codex.first { $0.name == "mcp" }
+        XCTAssertEqual(mcp?.children.map(\.insertion), ["/mcp pencil", "/mcp firecrawl"])
+        // Models nest one level further, into their reasoning levels.
+        let model = codex.first { $0.name == "model" }?.children.first
+        XCTAssertEqual(model?.insertion, "/model gpt-6-astra")
+        XCTAssertEqual(model?.children.map(\.insertion), ["/model gpt-6-astra low", "/model gpt-6-astra high"])
+
+        let claude = SlashCommands.all(agent: "claude", cwd: nil, context: context, home: home)
+        XCTAssertEqual(claude.first { $0.name == "resume" }?.children.first?.insertion, "/resume abc-123")
+    }
+
+    func testConfigParsersReadCodexServersAndModels() {
+        let servers = SlashContext.parseCodexServers("""
+        model = "gpt-6"
+
+        [mcp_servers.pencil]
+        command = "pencil"
+
+        [mcp_servers.firecrawl]
+        url = "https://example.com"
+
+        [features]
+        codex_hooks = true
+        """)
+        XCTAssertEqual(servers, ["pencil", "firecrawl"])
+
+        let models = SlashContext.parseCodexModels(Data("""
+        {"models":[{"slug":"gpt-6-astra","description":"Most capable",
+          "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}
+        """.utf8))
+        XCTAssertEqual(models.map(\.id), ["gpt-6-astra"])
+        XCTAssertEqual(models.first?.efforts, ["low", "high"])
+    }
+
+    func testMatchingSearchesTheWholeTreeAndPrefersPrefixes() {
         let commands = SlashCommands.all(agent: "claude", cwd: nil, home: home)
         XCTAssertEqual(SlashCommands.matching("comp", in: commands).first?.name, "compact")
-        XCTAssertEqual(SlashCommands.matching("rev", in: commands).first?.name, "review")
-        // Only the summary mentions vim bindings' "toggle".
+        // A namespaced command is findable from the top level by its own name.
+        XCTAssertTrue(SlashCommands.matching("amend", in: commands).contains { $0.insertion == "/git:amend" })
         XCTAssertTrue(SlashCommands.matching("toggle", in: commands).contains { $0.name == "vim" })
         XCTAssertTrue(SlashCommands.matching("zzz", in: commands).isEmpty)
         XCTAssertEqual(SlashCommands.matching("", in: commands).count, commands.count)
+    }
+}
+
+final class TabAutoNameTests: XCTestCase {
+    private func snapshot(title: String?, label: String, panes: Int = 1, cwd: String = "/work/app") -> HerdrSnapshot {
+        let panes = (0..<panes).map { index in
+            HerdrPane(paneId: "w1:p\(index)", tabId: "w1:t1", workspaceId: "w1", focused: index == 0, cwd: cwd,
+                      foregroundCwd: nil, agentStatus: .idle, terminalTitle: title, terminalId: "term\(index)")
+        }
+        return HerdrSnapshot(
+            workspaces: [HerdrWorkspace(workspaceId: "w1", number: 1, label: "app", focused: true, paneCount: panes.count,
+                                        tabCount: 1, activeTabId: "w1:t1", agentStatus: .idle, worktree: nil)],
+            tabs: [HerdrTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: label, focused: true,
+                            paneCount: panes.count, agentStatus: .idle)],
+            panes: panes, agents: [], focusedWorkspaceId: "w1", focusedTabId: "w1:t1", focusedPaneId: nil
+        )
+    }
+
+    func testTitlesBecomeLabelsAndUninformativeOnesDont() {
+        XCTAssertEqual(TabAutoName.label(from: "✳ Fix the tab bar lag"), "Fix the tab bar lag")
+        XCTAssertEqual(TabAutoName.label(from: "  Rewrite   the parser  "), "Rewrite the parser")
+        XCTAssertEqual(TabAutoName.label(from: "jack@mac: ~/Developer/herd"), nil)
+        XCTAssertNil(TabAutoName.label(from: "zsh"))
+        XCTAssertNil(TabAutoName.label(from: "/Users/jack/app"))
+        XCTAssertNil(TabAutoName.label(from: "app", cwd: "/work/app"))
+        XCTAssertNil(TabAutoName.label(from: nil))
+        // Long titles cut at a word boundary.
+        XCTAssertEqual(TabAutoName.label(from: "Investigate the flaky integration test suite"),
+                       "Investigate the flaky…")
+    }
+
+    func testRenamesWaitForTheTitleToSettleAndRespectManualNames() {
+        var pending: [String: TabAutoName.Candidate] = [:]
+        let start = Date()
+        let working = snapshot(title: "Fix the lag", label: "1")
+
+        // First sighting proposes nothing yet.
+        XCTAssertTrue(TabAutoName.renames(snapshot: working, manual: [], pending: &pending, now: start).isEmpty)
+        // A different title restarts the clock.
+        let switched = snapshot(title: "Write the docs", label: "1")
+        XCTAssertTrue(TabAutoName.renames(snapshot: switched, manual: [], pending: &pending,
+                                          now: start + 2).isEmpty)
+        let settled = TabAutoName.renames(snapshot: switched, manual: [], pending: &pending, now: start + 5)
+        XCTAssertEqual(settled.map(\.label), ["Write the docs"])
+        // Renaming once is enough; it isn't proposed again.
+        XCTAssertTrue(TabAutoName.renames(snapshot: snapshot(title: "Write the docs", label: "Write the docs"),
+                                          manual: [], pending: &pending, now: start + 8).isEmpty)
+
+        // A tab the user named is left alone, and split tabs have no subject.
+        pending = [:]
+        _ = TabAutoName.renames(snapshot: working, manual: ["w1:t1"], pending: &pending, now: start)
+        XCTAssertTrue(TabAutoName.renames(snapshot: working, manual: ["w1:t1"], pending: &pending, now: start + 5).isEmpty)
+        pending = [:]
+        let split = snapshot(title: "Fix the lag", label: "1", panes: 2)
+        _ = TabAutoName.renames(snapshot: split, manual: [], pending: &pending, now: start)
+        XCTAssertTrue(TabAutoName.renames(snapshot: split, manual: [], pending: &pending, now: start + 5).isEmpty)
     }
 }

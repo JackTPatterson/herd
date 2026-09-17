@@ -68,10 +68,12 @@ All eight items done and verified in the running app:
 | Warp styling | colors/metrics from Warp source |
 | Shortcuts | ⌘1–9, ⌘T/W/N/B, ⌃⌘↑/↓ verified |
 | Subagent tabs | real `claude -p` run spawned a subagent → background tab "Answer arithmetic" rendered its prompt and answer, state done |
-| Tests | 44 unit tests pass |
+| Tests | 51 unit tests pass |
 | Session recovery | killed a herdr server holding two agents, relaunched: the panel offered both, and herdr accepted the resume tabs it builds |
 | Marketplace | real MCP servers from both CLIs merged per agent; 34 library skills listed with per-agent chips; prompts created, listed and linked |
-| Slash menu | menu renders over the terminal with built-ins, user, project and plugin commands |
+| Slash menu | renders over the terminal with built-ins, user, project and plugin commands; `/mcp` submenu lists the machine's real servers |
+| Confirmations | Herd's own dialog replaces every NSAlert (verified on the quit confirmation) |
+| Agent-agnostic | hosts discovered by convention from `~/.<agent>`; hook installer, library, slash commands and MCP/plugin CLIs all keyed off host capabilities |
 | Performance | Release build idles at ~1% CPU (debug window snapshots were 63% of main-thread time) |
 
 Not verified: IME composition, mixed-DPI displays, and ⌘⇧[ / ⌘⇧].

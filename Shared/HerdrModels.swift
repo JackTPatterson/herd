@@ -75,6 +75,13 @@ struct HerdrPane: Codable, Equatable, Identifiable {
 
     var id: String { paneId }
 
+    /// Where the pane's work is now: agents and shells `cd` while running,
+    /// so the foreground process's folder wins over the launch folder.
+    var effectiveCwd: String? { foregroundCwd ?? cwd }
+
+    /// Both folders, newest first, for lookups that could match either.
+    var searchCwds: [String] { [foregroundCwd, cwd].compactMap { $0 }.reduced() }
+
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id", tabId = "tab_id", workspaceId = "workspace_id", focused, cwd
         case foregroundCwd = "foreground_cwd", agentStatus = "agent_status"
@@ -92,6 +99,7 @@ struct HerdrAgent: Codable, Equatable, Identifiable {
     let agentStatus: HerdrAgentStatus
     var stateChangeSeq: Int? = nil
     var cwd: String? = nil
+    var foregroundCwd: String? = nil
     var terminalId: String? = nil
     /// Native session reference reported by an official herdr integration.
     var agentSession: SessionReference? = nil
@@ -105,12 +113,20 @@ struct HerdrAgent: Codable, Equatable, Identifiable {
 
     var sessionReference: String? { agentSession?.value }
 
+    /// The folder the agent is working in now, which may not be the one it
+    /// started in.
+    var effectiveCwd: String? { foregroundCwd ?? cwd }
+
+    /// Both folders, for finding the agent's own session files.
+    var searchCwds: [String] { [cwd, foregroundCwd].compactMap { $0 }.reduced() }
+
     var id: String { paneId }
 
     enum CodingKeys: String, CodingKey {
         case paneId = "pane_id", tabId = "tab_id", workspaceId = "workspace_id"
         case agent, name, displayAgent = "display_agent", agentStatus = "agent_status"
-        case stateChangeSeq = "state_change_seq", cwd, terminalId = "terminal_id", agentSession = "agent_session"
+        case stateChangeSeq = "state_change_seq", cwd, foregroundCwd = "foreground_cwd"
+        case terminalId = "terminal_id", agentSession = "agent_session"
     }
 }
 
@@ -175,6 +191,14 @@ struct HerdrSnapshot: Codable, Equatable {
     func directory(ofWorkspace workspaceId: String) -> String? {
         let ordered = panes.filter { $0.workspaceId == workspaceId }
         return (ordered.first(where: \.focused) ?? ordered.first).flatMap { $0.foregroundCwd ?? $0.cwd }
+    }
+}
+
+private extension Array where Element == String {
+    /// Keeps order, drops repeats.
+    func reduced() -> [String] {
+        var seen = Set<String>()
+        return filter { seen.insert($0).inserted }
     }
 }
 

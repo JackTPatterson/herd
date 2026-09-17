@@ -28,6 +28,7 @@ final class HerdrStore: ObservableObject {
     }
     // Isolated sessions (HERD_SESSION) keep their own activity state.
     private static let keySuffix = HerdrSession.name == "herd" ? "" : ".\(HerdrSession.name)"
+    private static let manualNamesKey = "herd.tabs.manualNames" + keySuffix
     private static let stampsKey = "herd.activity.stamps" + keySuffix
     private static let pinnedKey = "herd.activity.pinned" + keySuffix
     private static let idleAfterKey = "herd.activity.idleAfter" + keySuffix
@@ -36,6 +37,9 @@ final class HerdrStore: ObservableObject {
     /// until the user focuses them again.
     private var forcedIdle: Set<String> = []
     private var lastFocusedWorkspaceId: String?
+    /// Tabs the user named, which auto-naming leaves alone.
+    private var manuallyNamedTabIds: Set<String> = []
+    private var pendingTabNames: [String: TabAutoName.Candidate] = [:]
     private var clockTimer: Timer?
     @Published private(set) var isConnected = false
     @Published var lastError: String?
@@ -55,6 +59,7 @@ final class HerdrStore: ObservableObject {
             activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
         }
         pinnedWorkspaceIds = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
+        manuallyNamedTabIds = Set(defaults.stringArray(forKey: Self.manualNamesKey) ?? [])
         let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
         if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
     }
@@ -172,6 +177,7 @@ final class HerdrStore: ObservableObject {
     func apply(_ snapshot: HerdrSnapshot, branches: [String: String]) {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
+        autoNameTabs(in: snapshot)
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot
@@ -190,6 +196,41 @@ final class HerdrStore: ObservableObject {
         }
         return branches
     }
+
+    // MARK: - Tab names
+
+    /// Renames tabs to the work their pane reports, for any agent or shell.
+    private func autoNameTabs(in snapshot: HerdrSnapshot) {
+        guard SettingsStore.shared.values.autoNameTabs else {
+            pendingTabNames.removeAll()
+            return
+        }
+        let present = Set(snapshot.tabs.map(\.tabId))
+        if manuallyNamedTabIds.contains(where: { !present.contains($0) }) {
+            manuallyNamedTabIds.formIntersection(present)
+            UserDefaults.standard.set(Array(manuallyNamedTabIds), forKey: Self.manualNamesKey)
+        }
+        let renames = TabAutoName.renames(snapshot: snapshot, manual: manuallyNamedTabIds, pending: &pendingTabNames)
+        for rename in renames {
+            perform("tab.rename", ["tab_id": rename.tabId, "label": rename.label])
+        }
+    }
+
+    /// Stops auto-naming a tab the user named themselves.
+    private func markManuallyNamed(_ tabId: String) {
+        guard manuallyNamedTabIds.insert(tabId).inserted else { return }
+        pendingTabNames[tabId] = nil
+        UserDefaults.standard.set(Array(manuallyNamedTabIds), forKey: Self.manualNamesKey)
+    }
+
+    /// Lets a tab follow its work again.
+    func resumeAutoNaming(_ tabId: String) {
+        guard manuallyNamedTabIds.remove(tabId) != nil else { return }
+        UserDefaults.standard.set(Array(manuallyNamedTabIds), forKey: Self.manualNamesKey)
+        scheduleRefresh()
+    }
+
+    func isManuallyNamed(_ tabId: String) -> Bool { manuallyNamedTabIds.contains(tabId) }
 
     // MARK: - Idle organization
 
@@ -379,6 +420,7 @@ final class HerdrStore: ObservableObject {
     }
 
     func renameTab(_ id: String, to label: String) {
+        markManuallyNamed(id)
         perform("tab.rename", ["tab_id": id, "label": label], failure: "Couldn't rename tab")
     }
 
@@ -645,7 +687,7 @@ final class HerdrStore: ObservableObject {
 
     /// Downloads the plugin, shows herdr's install preview for confirmation,
     /// then installs it — with a toast for each stage.
-    func installPlugin(repo: String, herdrPath: String, confirm: @escaping (String) -> Bool) {
+    func installPlugin(repo: String, herdrPath: String, confirm: @escaping (String, @escaping (Bool) -> Void) -> Void) {
         let handle = toasts.progress("Downloading \(repo)…", detail: "Fetching the install preview")
         PluginCLI.preview(repo: repo, herdrPath: herdrPath) { [weak self] result in
             guard let self else { return }
@@ -656,18 +698,20 @@ final class HerdrStore: ObservableObject {
                 let name = PluginCLI.previewField("name", in: preview) ?? repo
                 let version = PluginCLI.previewField("version", in: preview)
                 self.toasts.dismiss(handleId: handle)
-                guard confirm(preview) else {
-                    self.toasts.info("Install cancelled", detail: name)
-                    return
-                }
-                let installing = self.toasts.progress("Installing \(name)…", detail: "Running the plugin's build steps")
-                PluginCLI.install(repo: repo, herdrPath: herdrPath) { outcome in
-                    if outcome.exitCode == 0 {
-                        self.toasts.succeed(installing, "Installed \(name)\(version.map { " \($0)" } ?? "")")
-                    } else {
-                        self.toasts.fail(installing, "Couldn't install \(name)", detail: PluginCLI.lastLines(outcome.output))
+                confirm(preview) { confirmed in
+                    guard confirmed else {
+                        self.toasts.info("Install cancelled", detail: name)
+                        return
                     }
-                    self.refreshPlugins()
+                    let installing = self.toasts.progress("Installing \(name)…", detail: "Running the plugin's build steps")
+                    PluginCLI.install(repo: repo, herdrPath: herdrPath) { outcome in
+                        if outcome.exitCode == 0 {
+                            self.toasts.succeed(installing, "Installed \(name)\(version.map { " \($0)" } ?? "")")
+                        } else {
+                            self.toasts.fail(installing, "Couldn't install \(name)", detail: PluginCLI.lastLines(outcome.output))
+                        }
+                        self.refreshPlugins()
+                    }
                 }
             }
         }

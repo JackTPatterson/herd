@@ -5,7 +5,10 @@ import Foundation
 struct AgentSessionRecord: Codable, Equatable, Identifiable {
     var agent: String
     var sessionId: String?
+    /// Where the agent was launched: `--resume` reopens it here.
     var cwd: String
+    /// Where it had moved to, when that differs.
+    var currentCwd: String?
     var workspaceLabel: String
     var tabLabel: String
     var terminalId: String
@@ -67,6 +70,9 @@ enum AgentRecovery {
         for agent in snapshot.agents {
             guard let kind = agent.agent, let terminalId = agent.terminalId,
                   let cwd = agent.cwd ?? snapshot.panes.first(where: { $0.paneId == agent.paneId })?.cwd else { continue }
+            // Resuming happens in the folder the agent started in; where it
+            // wandered to is remembered separately.
+            let current = agent.effectiveCwd
             var record = byTerminal[terminalId] ?? AgentSessionRecord(
                 agent: kind, sessionId: nil, cwd: cwd,
                 workspaceLabel: "", tabLabel: "", terminalId: terminalId,
@@ -74,6 +80,7 @@ enum AgentRecovery {
             )
             record.agent = kind
             record.cwd = cwd
+            record.currentCwd = current == cwd ? nil : current
             record.workspaceLabel = agent.workspaceId.flatMap { workspaceLabels[$0] } ?? record.workspaceLabel
             record.tabLabel = agent.tabId.flatMap { tabLabels[$0] } ?? record.tabLabel
             record.lastSeen = now
@@ -219,23 +226,28 @@ enum AgentSessionFiles {
         var claimed = Set<String>()
         var result: [String: String] = [:]
         let candidates = agents
-            .filter { $0.sessionReference == nil && $0.terminalId != nil && $0.cwd != nil }
+            .filter { $0.sessionReference == nil && $0.terminalId != nil && !$0.searchCwds.isEmpty }
             .sorted { (firstSeen[$0.terminalId!] ?? now) > (firstSeen[$1.terminalId!] ?? now) }
         // First pass: files written since the agent appeared. Second pass:
         // agents that have been quiet since Herd first saw them take the
         // newest unclaimed session in their folder.
         for strict in [true, false] {
             for agent in candidates where result[agent.terminalId!] == nil {
-                let terminal = agent.terminalId!, cwd = agent.cwd!
+                let terminal = agent.terminalId!
                 let since = strict ? firstSeen[terminal] ?? now : .distantPast
-                let id: String? = switch AgentBrand.forAgent(agent.agent)?.id {
-                case "claude": claudeSession(cwd: cwd, since: since, excluding: claimed)
-                case "codex": codexSession(cwd: cwd, since: since, now: now, excluding: claimed)
-                default: nil
-                }
-                if let id {
-                    claimed.insert(id)
-                    result[terminal] = id
+                // An agent can `cd` while it runs, so try both folders it
+                // has been in: the launch one and the current one.
+                for cwd in agent.searchCwds {
+                    let id: String? = switch AgentBrand.forAgent(agent.agent)?.id {
+                    case "claude": claudeSession(cwd: cwd, since: since, excluding: claimed)
+                    case "codex": codexSession(cwd: cwd, since: since, now: now, excluding: claimed)
+                    default: nil
+                    }
+                    if let id {
+                        claimed.insert(id)
+                        result[terminal] = id
+                        break
+                    }
                 }
             }
         }
