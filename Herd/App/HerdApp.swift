@@ -45,6 +45,8 @@ struct HerdCommands: Commands {
                 .keyboardShortcut("t", modifiers: .command)
             Button("New Workspace") { store.newWorkspace() }
                 .keyboardShortcut("n", modifiers: .command)
+            Button("Open Folder as Workspace…") { PaletteCatalog.openFolder(store: store) }
+                .keyboardShortcut("o", modifiers: .command)
             Divider()
             Button("Close Tab") { store.closeFocusedTab() }
                 .keyboardShortcut("w", modifiers: .command)
@@ -54,8 +56,30 @@ struct HerdCommands: Commands {
             Button("Remove Claude Subagent Tabs Hook") { ClaudeHookMenu.uninstall() }
         }
         CommandGroup(after: .sidebar) {
+            Button("Command Palette") { ui.paletteVisible.toggle() }
+                .keyboardShortcut("p", modifiers: .command)
+            Button("Command Palette ") { ui.paletteVisible.toggle() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
             Button("Toggle Sidebar") { ui.sidebarVisible.toggle() }
                 .keyboardShortcut("b", modifiers: .command)
+        }
+        CommandMenu("Pane") {
+            Button("Split Right") { store.splitPane(.right) }
+                .keyboardShortcut("d", modifiers: .command)
+            Button("Split Down") { store.splitPane(.down) }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+            Button("Toggle Zoom") { store.toggleZoom() }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+            Button("Close Pane") { store.closeFocusedPane() }
+            Divider()
+            Button("Focus Left") { store.focusPane(.left) }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+            Button("Focus Right") { store.focusPane(.right) }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+            Button("Focus Up") { store.focusPane(.up) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            Button("Focus Down") { store.focusPane(.down) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
         }
         CommandMenu("Navigate") {
             Button("Next Tab") { store.selectAdjacentTab(offset: 1) }

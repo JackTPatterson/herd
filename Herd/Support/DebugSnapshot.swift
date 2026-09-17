@@ -9,6 +9,9 @@ import IOSurface
 
 @MainActor
 enum DebugSnapshot {
+    /// Set while a SwiftUI overlay covers the terminal, so the terminal image
+    /// isn't composited over it.
+    static var overlayVisible = false
     static func start() {
         guard let dir = ProcessInfo.processInfo.environment["HERD_SNAPSHOT_DIR"] else { return }
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
@@ -44,7 +47,7 @@ enum DebugSnapshot {
             }
             info += "terminal=\(frame) firstResponder=\(window.firstResponder === surfaceView)\n"
             let contents = surfaceView.layer?.contents ?? surfaceView.layer?.sublayers?.first?.contents
-            if let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
+            if !overlayVisible, let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
                 let ioSurface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
                 let image = CIImage(ioSurface: ioSurface)
                 if let cg = CIContext().createCGImage(image, from: image.extent) {

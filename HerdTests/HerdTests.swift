@@ -193,3 +193,59 @@ final class SubagentTranscriptTests: XCTestCase {
         XCTAssertEqual(finishedCount, 1)
     }
 }
+
+final class FuzzyMatcherTests: XCTestCase {
+    func testSubsequenceRequired() {
+        XCTAssertNotNil(FuzzyMatcher.match("ntab", in: "New Tab"))
+        XCTAssertNil(FuzzyMatcher.match("tabn", in: "New Tab"))
+        XCTAssertEqual(FuzzyMatcher.match("", in: "anything")?.score, 0)
+    }
+
+    func testWordStartsAndPrefixesOutrankScatteredMatches() throws {
+        let wordStarts = try XCTUnwrap(FuzzyMatcher.match("st", in: "Split Tab"))
+        let scattered = try XCTUnwrap(FuzzyMatcher.match("st", in: "Last"))
+        XCTAssertGreaterThan(wordStarts.score, scattered.score)
+        let prefix = try XCTUnwrap(FuzzyMatcher.match("new", in: "New Workspace"))
+        let inner = try XCTUnwrap(FuzzyMatcher.match("new", in: "Rename Workspace"))
+        XCTAssertGreaterThan(prefix.score, inner.score)
+    }
+
+    func testIndicesPointAtMatchedCharacters() throws {
+        let match = try XCTUnwrap(FuzzyMatcher.match("nt", in: "New Tab"))
+        XCTAssertEqual(match.indices, [0, 4])
+    }
+}
+
+final class PaletteRankingTests: XCTestCase {
+    private let entries = [
+        PaletteSearchable(id: "action.newTab", kind: .action, title: "New Tab", subtitle: "", keywords: ["create"]),
+        PaletteSearchable(id: "action.closeTab", kind: .action, title: "Close Tab", subtitle: "", keywords: []),
+        PaletteSearchable(id: "workspace.w1", kind: .workspace, title: "cmux", subtitle: "feat/tabs", keywords: []),
+        PaletteSearchable(id: "tab.w1:t2", kind: .tab, title: "Explore: map api", subtitle: "cmux", keywords: []),
+        PaletteSearchable(id: "agent.w1:p2", kind: .agent, title: "Claude Code", subtitle: "working", keywords: ["claude"]),
+    ]
+
+    func testPrefixFilters() {
+        XCTAssertEqual(PaletteKind.parse(">new").filter, .action)
+        XCTAssertEqual(PaletteKind.parse(">new").query, "new")
+        let tabs = PaletteRanking.rank(entries, query: "#", filter: nil, recentIds: [])
+        XCTAssertEqual(tabs.map(\.id), ["tab.w1:t2"])
+    }
+
+    func testQueryRanksBestMatchFirstAndMatchesSubtitles() {
+        XCTAssertEqual(PaletteRanking.rank(entries, query: "new tab", filter: nil, recentIds: []).first?.id, "action.newTab")
+        XCTAssertTrue(PaletteRanking.rank(entries, query: "feat", filter: nil, recentIds: []).map(\.id).contains("workspace.w1"))
+    }
+
+    func testZeroStateShowsRecentsFirstThenKindOrder() {
+        let ranked = PaletteRanking.rank(entries, query: "", filter: nil, recentIds: ["action.closeTab"]).map(\.id)
+        XCTAssertEqual(ranked.first, "action.closeTab")
+        XCTAssertEqual(ranked[1], "workspace.w1")
+        XCTAssertEqual(ranked.last, "action.newTab")
+    }
+
+    func testChipFilterAndRecencyRecording() {
+        XCTAssertEqual(PaletteRanking.rank(entries, query: "", filter: .agent, recentIds: []).map(\.id), ["agent.w1:p2"])
+        XCTAssertEqual(PaletteRanking.recording("b", in: ["a", "b", "c"]), ["b", "a", "c"])
+    }
+}

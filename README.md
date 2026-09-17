@@ -35,10 +35,32 @@ hook for `Agent|Task` to `~/.claude/settings.json` (backup:
 `settings.json.herd-backup`). It does nothing outside Herd panes. Reinstall
 after moving Herd.app, since the hook stores the herd-cli path.
 
+## Command palette
+
+⌘P (or ⌘⇧P, or click the title bar search) opens a Warp-style palette that
+fuzzy-searches everything:
+
+| Filter | Prefix | Contents |
+| --- | --- | --- |
+| Actions | `>` | every command (tabs, panes, workspaces, worktrees, sidebar, herdr config, Claude hook), with shortcuts |
+| Workspaces | `%` | all workspaces with project, branch, and agent state |
+| Tabs | `#` | tabs across all workspaces, including subagent tabs |
+| Agents | `@` | running agents; jumps to their pane |
+| Projects | `/` | folders under ~/Developer, ~/Projects, ~/code, ~/src; opens or focuses a workspace |
+
+↑↓ or ⌃N/⌃P to move, ↩ to run, ⇥ to cycle filters, esc to close. With an empty
+query it shows your 3 most recent picks first. Rename Tab/Workspace and New
+Worktree ask for text inline.
+
 ## Shortcuts
 
 | Keys | Action |
 | --- | --- |
+| ⌘P | Command palette |
+| ⌘O | Open folder as workspace |
+| ⌘D / ⌘⇧D | Split pane right / down |
+| ⌘⇧↩ | Toggle pane zoom |
+| ⌘⌥←↑→↓ | Focus pane in direction |
 | ⌘T / ⌘W | New / close tab |
 | ⌘1…⌘9 | Tab 1–9 (9 = last) |
 | ⌘⇧[ / ⌘⇧] | Previous / next tab |

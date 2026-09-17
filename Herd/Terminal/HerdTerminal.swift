@@ -34,6 +34,24 @@ final class HerdTerminalRuntime {
         runtime.ghosttyApp = Ghostty.App(overrides: overrides)
     }
 
+    /// Makes the key window's terminal surface first responder again.
+    static func focusTerminal() {
+        DispatchQueue.main.async {
+            guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible),
+                  let content = window.contentView,
+                  let surface = findSurface(in: content) else { return }
+            window.makeFirstResponder(surface)
+        }
+    }
+
+    private static func findSurface(in view: NSView) -> Ghostty.SurfaceView? {
+        if let surface = view as? Ghostty.SurfaceView { return surface }
+        for sub in view.subviews {
+            if let surface = findSurface(in: sub) { return surface }
+        }
+        return nil
+    }
+
     /// Config diagnostics (invalid override lines, etc.).
     var configErrors: [String] {
         app.config.errors

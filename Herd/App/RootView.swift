@@ -5,6 +5,7 @@ struct RootView: View {
     @ObservedObject var store: HerdrStore
     @ObservedObject var ui: UIState
     let session: HerdrSession?
+    @StateObject private var palette = PaletteModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,9 +21,33 @@ struct RootView: View {
                 }
             }
         }
+        .overlay {
+            if ui.paletteVisible {
+                CommandPaletteView(model: palette) { closePalette() }
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: ui.paletteVisible) { _, visible in
+            DebugSnapshot.overlayVisible = visible
+            if visible {
+                palette.reset()
+                palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
+            } else {
+                HerdTerminalRuntime.focusTerminal()
+            }
+        }
+        .onChange(of: store.snapshot) { _, _ in
+            if ui.paletteVisible, palette.prompt == nil {
+                palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
+            }
+        }
         .background(Theme.terminalBackground)
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
+    }
+
+    private func closePalette() {
+        ui.paletteVisible = false
     }
 
     @ViewBuilder
@@ -52,6 +77,7 @@ struct RootView: View {
 
 final class UIState: ObservableObject {
     @Published var sidebarVisible = true
+    @Published var paletteVisible = false
 }
 
 private struct TitleBar: View {
@@ -75,10 +101,24 @@ private struct TitleBar: View {
             .buttonStyle(.plain)
             .help("Toggle Sidebar (⌘B)")
             Spacer()
-            Text(titleText)
-                .font(Theme.uiFontMedium)
+            Button {
+                ui.paletteVisible = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11))
+                    Text(titleText).font(Theme.uiFontMedium).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Keycap(text: "⌘P")
+                }
                 .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(width: 420, height: 26)
+                .background(Theme.card)
+                .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            }
+            .buttonStyle(.plain)
+            .help("Command Palette (⌘P)")
             Spacer()
             connectionIndicator
                 .padding(.trailing, 12)

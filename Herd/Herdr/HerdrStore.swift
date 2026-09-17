@@ -166,6 +166,86 @@ final class HerdrStore: ObservableObject {
         closeTab(id)
     }
 
+    func renameWorkspace(_ id: String, to label: String) {
+        perform("workspace.rename", ["workspace_id": id, "label": label])
+    }
+
+    var focusedPaneId: String? {
+        snapshot.focusedPaneId ?? snapshot.panes.first(where: \.focused)?.paneId
+    }
+
+    enum SplitDirection: String { case right, down }
+    enum PaneDirection: String { case left, right, up, down }
+
+    func splitPane(_ direction: SplitDirection) {
+        var params: [String: Any] = ["direction": direction.rawValue, "focus": true]
+        if let pane = focusedPaneId { params["target_pane_id"] = pane }
+        if let workspace = focusedWorkspace,
+           let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) {
+            params["cwd"] = cwd
+        }
+        perform("pane.split", params)
+    }
+
+    func toggleZoom() {
+        var params: [String: Any] = ["mode": "toggle"]
+        if let pane = focusedPaneId { params["pane_id"] = pane }
+        perform("pane.zoom", params)
+    }
+
+    func closeFocusedPane() {
+        guard let pane = focusedPaneId else { return }
+        perform("pane.close", ["pane_id": pane])
+    }
+
+    func focusPane(_ direction: PaneDirection) {
+        perform("pane.focus_direction", ["direction": direction.rawValue])
+    }
+
+    func focusAgent(paneId: String) { perform("agent.focus", ["target": paneId]) }
+
+    /// Focuses a tab in any workspace.
+    func focusTabAnywhere(_ tab: HerdrTab) {
+        let client = self.client
+        let currentWorkspaceId = focusedWorkspace?.workspaceId
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                if tab.workspaceId != currentWorkspaceId {
+                    try client.call("workspace.focus", ["workspace_id": tab.workspaceId])
+                }
+                try client.call("tab.focus", ["tab_id": tab.tabId])
+            } catch {
+                DispatchQueue.main.async { self?.lastError = String(describing: error) }
+            }
+            DispatchQueue.main.async { self?.scheduleRefresh() }
+        }
+    }
+
+    func openProject(path: String) {
+        let label = URL(fileURLWithPath: path).lastPathComponent
+        if let existing = groups.first(where: { $0.id == path })?.workspaces.first {
+            focusWorkspace(existing.workspaceId)
+            return
+        }
+        perform("workspace.create", ["cwd": path, "label": label, "focus": true])
+    }
+
+    func createWorktree(branch: String) {
+        var params: [String: Any] = ["branch": branch, "focus": true]
+        if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
+        perform("worktree.create", params)
+    }
+
+    func reloadHerdrConfig() { perform("server.reload_config", [:]) }
+
+    func moveFocusedTab(by offset: Int) {
+        let tabs = focusedWorkspaceTabs
+        guard let index = tabs.firstIndex(where: { $0.tabId == snapshot.focusedTabId }) else { return }
+        let target = max(0, min(tabs.count - 1, index + offset))
+        guard target != index else { return }
+        perform("tab.move", ["tab_id": tabs[index].tabId, "insert_index": target])
+    }
+
     // MARK: - Presentation helpers
 
     /// The most relevant agent in a set: blocked > working > done > idle.
