@@ -12,6 +12,13 @@ enum DebugSnapshot {
     /// Set while a SwiftUI overlay covers the terminal, so the terminal image
     /// isn't composited over it.
     static var overlayVisible = false
+
+    /// Toasts draw over the terminal area, so the composited terminal image
+    /// would erase them from the capture.
+    @MainActor
+    static var overlaysOnTop: Bool {
+        overlayVisible || !ToastCenter.shared.visibleToasts.isEmpty
+    }
     static func start() {
         // Encoding window PNGs is main-thread heavy: debug builds only.
         #if !DEBUG
@@ -69,7 +76,7 @@ enum DebugSnapshot {
             }
             info += "terminal=\(frame) firstResponder=\(window.firstResponder === surfaceView)\n"
             let contents = surfaceView.layer?.contents ?? surfaceView.layer?.sublayers?.first?.contents
-            if !overlayVisible, toasts.isEmpty, let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
+            if !overlaysOnTop, toasts.isEmpty, let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
                 let ioSurface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
                 let image = CIImage(ioSurface: ioSurface)
                 if let cg = CIContext().createCGImage(image, from: image.extent) {

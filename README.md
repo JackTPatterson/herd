@@ -149,6 +149,16 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Clipboard
+
+Copying looks identical whether or not it worked, so Herd confirms it in its
+own toast with a line of what landed there. herdr publishes no clipboard
+event, so Herd watches the pasteboard while it is the active app, which
+catches every route: copy-on-select, ⌘C, herdr's copy mode, and plugins.
+Settings → Terminal turns it off. (If your agent notifications are set to
+"system", herdr may also post its own notification for copies made in its
+copy mode; setting notifications to Herd or off leaves only this toast.)
+
 ## Toasts
 
 Actions whose result isn't immediately visible or that take time show a

@@ -817,3 +817,15 @@ final class TabAutoNameTests: XCTestCase {
         XCTAssertTrue(TabAutoName.renames(snapshot: split, manual: [], pending: &pending, now: start + 5).isEmpty)
     }
 }
+
+final class ClipboardPreviewTests: XCTestCase {
+    func testPreviewShowsOneLineAndHowMuchMore() {
+        XCTAssertEqual(ClipboardPreview.summary("herdr --session herd"), "herdr --session herd")
+        XCTAssertEqual(ClipboardPreview.summary("  trimmed  "), "trimmed")
+        XCTAssertEqual(ClipboardPreview.summary("first\nsecond\nthird"), "first · +2 lines")
+        XCTAssertEqual(ClipboardPreview.summary("only\nmore"), "only · +1 line")
+        // A leading blank line still says how much was copied.
+        XCTAssertEqual(ClipboardPreview.summary("\nbody"), "2 lines")
+        XCTAssertEqual(ClipboardPreview.summary(String(repeating: "x", count: 80), limit: 10), "xxxxxxxxx…")
+    }
+}

@@ -265,6 +265,13 @@ private struct TerminalSettings: View {
                 Toggle("", isOn: $settings.values.copyOnSelect).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Confirm copies",
+                detail: "Show a Herd toast with what landed on the clipboard — copying looks the same whether or not it worked."
+            ) {
+                Toggle("", isOn: $settings.values.clipboardToasts).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
             SettingsRow(title: "Lines per scroll wheel notch") {
                 Stepper(value: $settings.values.mouseScrollLines, in: 1...20, step: 1) {
                     Text("\(Int(settings.values.mouseScrollLines))").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)

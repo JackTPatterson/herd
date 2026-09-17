@@ -30,6 +30,7 @@ struct HerdSettings: Codable, Equatable {
     // MARK: Terminal (Ghostty input + herdr panes)
     var scrollbackMegabytes: Double = 10
     var copyOnSelect = true
+    var clipboardToasts = true
     var mouseScrollLines: Double = 3
     var optionAsAlt: OptionAsAlt = .off
     var hideMouseWhileTyping = true
@@ -94,6 +95,7 @@ struct HerdSettings: Codable, Equatable {
         paneScrollbars = value("paneScrollbars", defaults.paneScrollbars)
         scrollbackMegabytes = value("scrollbackMegabytes", defaults.scrollbackMegabytes)
         copyOnSelect = value("copyOnSelect", defaults.copyOnSelect)
+        clipboardToasts = value("clipboardToasts", defaults.clipboardToasts)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
         optionAsAlt = value("optionAsAlt", defaults.optionAsAlt)
         hideMouseWhileTyping = value("hideMouseWhileTyping", defaults.hideMouseWhileTyping)

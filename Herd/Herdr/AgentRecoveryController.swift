@@ -104,6 +104,8 @@ final class AgentRecoveryController: ObservableObject {
         let text = "cd \(shellPath(record.cwd)) && \(command)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        // This toast says it better than the generic clipboard one.
+        ClipboardWatcher.shared.acknowledge()
         ToastCenter.shared.info("Copied resume command", detail: text)
     }
 

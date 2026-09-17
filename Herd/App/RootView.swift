@@ -45,6 +45,7 @@ struct RootView: View {
         .onAppear {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
             slash.warmContexts()
+            ClipboardWatcher.shared.start()
             #if DEBUG
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == MarketplaceWindow.id {
