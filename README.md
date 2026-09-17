@@ -196,7 +196,7 @@ visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
 ## License
 
 MIT — see `LICENSE`. Herd bundles and derives from other MIT-licensed work,
-credited below.
+credited below; those license files live under `docs/`.
 
 ## Borrowed code and assets
 
