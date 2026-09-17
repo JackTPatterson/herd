@@ -435,3 +435,162 @@ final class AgentRecoveryTests: XCTestCase {
         XCTAssertNil(AgentSessionFiles.claudeSession(cwd: "/work/app", since: started, excluding: ["a", "b"], home: home))
     }
 }
+
+final class MarketplaceCatalogTests: XCTestCase {
+    func testPluginListMergesInstalledAndAvailableAcrossHosts() throws {
+        let claude = Data("""
+        {"installed":[{"id":"apple-mail@apple-mail-mcp","version":"3.1.2","enabled":true,
+          "installPath":"/x","installedAt":"2026-09-15T22:39:34.898Z"},
+         {"id":"old@mp","version":"1.0","enabled":false,"installPath":"/y","installedAt":"2026-01-01T00:00:00Z"}],
+         "available":[{"pluginId":"apple-mail@apple-mail-mcp","name":"apple-mail","description":"Mail",
+           "marketplaceName":"apple-mail-mcp","version":"3.1.2","installCount":10},
+          {"pluginId":"fresh@mp","name":"fresh","description":"New","marketplaceName":"mp","installCount":99}]}
+        """.utf8)
+        let codex = Data("""
+        {"installed":[{"pluginId":"fresh@mp","name":"fresh","marketplaceName":"mp","version":"2.0","installed":true,"enabled":true}]}
+        """.utf8)
+        let merged = MarketplaceCatalog.merge([
+            MarketplaceCatalog.plugins(json: claude, hostId: "claude"),
+            MarketplaceCatalog.plugins(json: codex, hostId: "codex"),
+        ])
+        let byId = Dictionary(uniqueKeysWithValues: merged.map { ($0.identifier, $0) })
+        XCTAssertEqual(byId["apple-mail@apple-mail-mcp"]?.installedIn, ["claude"])
+        XCTAssertEqual(byId["apple-mail@apple-mail-mcp"]?.summary, "Mail")
+        XCTAssertEqual(byId["fresh@mp"]?.installedIn, ["codex"])
+        XCTAssertEqual(byId["fresh@mp"]?.installCount, 99)
+        XCTAssertEqual(byId["old@mp"]?.enabledIn, [])
+        // Installed first, then most installed.
+        let order = MarketplaceCatalog.sorted(merged).map(\.identifier)
+        XCTAssertEqual(order.last, "old@mp")
+        XCTAssertTrue(order.firstIndex(of: "fresh@mp")! < order.firstIndex(of: "old@mp")!)
+    }
+
+    func testMCPParsersReadBothCLIs() {
+        let claude = MarketplaceCatalog.claudeMCP("""
+        Checking MCP server health…
+
+        pencil: /Applications/Pencil.app/mcp-server --app desktop - ✔ Connected
+        design-compare: node /x/index.mjs - ✘ Failed to connect — CONNECTION_CLOSED: Connection closed
+        mobbin: https://api.mobbin.com/mcp (HTTP) - ✔ Connected
+        """)
+        XCTAssertEqual(claude.map(\.name), ["pencil", "design-compare", "mobbin"])
+        XCTAssertEqual(claude[0].detail, "/Applications/Pencil.app/mcp-server --app desktop")
+        XCTAssertEqual(claude[2].status["claude"], "✔ Connected")
+
+        let codex = MarketplaceCatalog.codexMCP("""
+        Name     Command  Args           Env  Cwd  Status    Auth
+        blender  uvx      blender-mcp    -    -    enabled   Unsupported
+        paused   uvx      other-mcp      -    -    disabled  Unsupported
+
+        Name       Url                               Bearer Token Env Var  Status   Auth
+        firecrawl  https://mcp.firecrawl.dev/v2/mcp  -                     enabled  Unsupported
+        """)
+        XCTAssertEqual(codex.map(\.name), ["blender", "paused", "firecrawl"])
+        XCTAssertEqual(codex[0].detail, "uvx blender-mcp")
+        XCTAssertEqual(codex[1].enabledIn, [])
+        XCTAssertEqual(codex[2].detail, "https://mcp.firecrawl.dev/v2/mcp")
+    }
+
+    func testMarketplaceListParsing() {
+        let list = MarketplaceCatalog.marketplaces("""
+        Configured marketplaces:
+
+          ❯ claude-plugins-official
+            Source: GitHub (anthropics/claude-plugins-official)
+
+          ❯ apple-mail-mcp
+            Source: GitHub (patrickfreyer/apple-mail-mcp)
+        """)
+        XCTAssertEqual(list.map(\.name), ["claude-plugins-official", "apple-mail-mcp"])
+        XCTAssertEqual(list[0].source, "GitHub (anthropics/claude-plugins-official)")
+    }
+}
+
+final class AgentLibraryTests: XCTestCase {
+    private var home = ""
+    private var hosts: [AgentHost] = []
+
+    override func setUpWithError() throws {
+        home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        hosts = AgentHosts.all(home: home)
+        for host in hosts {
+            try FileManager.default.createDirectory(atPath: host.skillsDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: host.promptsDirectory, withIntermediateDirectories: true)
+        }
+        setenv("HERD_LIBRARY_DIR", home + "/.agents", 1)
+    }
+
+    override func tearDown() {
+        unsetenv("HERD_LIBRARY_DIR")
+        try? FileManager.default.removeItem(atPath: home)
+    }
+
+    func testSavedItemInstallsIntoEveryHostAndReadsItsFrontmatter() throws {
+        let text = "---\nname: review-diff\ndescription: \"Review the working diff\"\n---\n\nReview it.\n"
+        let prompt = try AgentLibrary.save(kind: .prompt, slug: "review-diff", text: text, hosts: hosts, home: home)
+        XCTAssertEqual(prompt.name, "review-diff")
+        XCTAssertEqual(prompt.summary, "Review the working diff")
+        XCTAssertTrue(prompt.installedIn.isEmpty)
+
+        for host in hosts { try AgentLibrary.install(prompt, into: host) }
+        let listed = AgentLibrary.items(.prompt, hosts: hosts, home: home)
+        XCTAssertEqual(listed.map(\.slug), ["review-diff"])
+        XCTAssertEqual(listed[0].installedIn, ["claude", "codex"])
+        // The link resolves to the one library copy, so an edit reaches both.
+        let viaClaude = try String(contentsOfFile: hosts[0].promptPath("review-diff"), encoding: .utf8)
+        XCTAssertEqual(viaClaude, text)
+
+        try AgentLibrary.uninstall(prompt, from: hosts[1])
+        XCTAssertEqual(AgentLibrary.items(.prompt, hosts: hosts, home: home)[0].installedIn, ["claude"])
+    }
+
+    func testFrontmatterBlockScalarsAndHeadingFallback() {
+        let block = AgentLibrary.describe("""
+        ---
+        name: firecrawl
+        description: |
+          Scrape and crawl the web.
+          Use when a page must be read.
+        ---
+
+        # Firecrawl
+        """)
+        XCTAssertEqual(block.name, "firecrawl")
+        XCTAssertEqual(block.summary, "Scrape and crawl the web. Use when a page must be read.")
+
+        // No frontmatter: the heading names it and the first line describes it.
+        let plain = AgentLibrary.describe("# Review Diff\n\nReview the working tree diff.\n")
+        XCTAssertEqual(plain.name, "Review Diff")
+        XCTAssertEqual(plain.summary, "Review the working tree diff.")
+
+        // A `description:` later in the body never overrides the frontmatter.
+        let body = AgentLibrary.describe("---\ndescription: The real summary\n---\n\nenv description: something else\n")
+        XCTAssertEqual(body.summary, "The real summary")
+    }
+
+    func testPromptBodyDropsFrontmatter() {
+        let text = "---\ndescription: Review the diff\n---\n\nReview the current diff.\n"
+        XCTAssertEqual(AgentLibrary.promptBody(text), "Review the current diff.")
+        XCTAssertEqual(AgentLibrary.promptBody("Just the prompt.\n"), "Just the prompt.")
+        XCTAssertEqual(AgentLibrary.promptBody("---\nname: x\n---\n"), "")
+    }
+
+    func testAdoptMovesAHostsOwnSkillIntoTheLibraryAndLinksItBack() throws {
+        let host = hosts[0]
+        let skill = host.skillPath("graphify")
+        try FileManager.default.createDirectory(atPath: skill, withIntermediateDirectories: true)
+        try "---\nname: graphify\ndescription: Knowledge graphs\n---\n".write(toFile: skill + "/SKILL.md", atomically: true, encoding: .utf8)
+        XCTAssertEqual(AgentLibrary.unmanaged(.skill, in: host), ["graphify"])
+
+        let adopted = try AgentLibrary.adopt(kind: .skill, slug: "graphify", from: host, hosts: hosts, home: home)
+        XCTAssertEqual(adopted.summary, "Knowledge graphs")
+        XCTAssertEqual(adopted.installedIn, ["claude"])
+        XCTAssertTrue(AgentLibrary.unmanaged(.skill, in: host).isEmpty)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: skill), adopted.path)
+
+        // A real file in the way is never clobbered.
+        let other = hosts[1]
+        try FileManager.default.createDirectory(atPath: other.skillPath("graphify"), withIntermediateDirectories: true)
+        XCTAssertThrowsError(try AgentLibrary.install(adopted, into: other))
+    }
+}

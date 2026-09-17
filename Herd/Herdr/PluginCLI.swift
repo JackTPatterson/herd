@@ -50,6 +50,8 @@ enum PluginCLI {
             .map { String($0.dropFirst(field.count + 1)).trimmingCharacters(in: .whitespaces) }
     }
 
+    static func quote(_ value: String) -> String { shellQuote(value) }
+
     static func lastLines(_ text: String, count: Int = 3) -> String {
         text.replacingOccurrences(of: "\r", with: "")
             .split(separator: "\n")
@@ -57,6 +59,12 @@ enum PluginCLI {
             .filter { !$0.isEmpty }
             .suffix(count)
             .joined(separator: "\n")
+    }
+
+    /// Runs any command in an interactive login shell (the agent CLIs live
+    /// on the user's PATH), off the main thread.
+    static func runShell(_ command: String, timeout: TimeInterval = 600, completion: @escaping (Result) -> Void) {
+        run(executable: "/bin/zsh", arguments: ["-lic", command + " </dev/null"], answer: nil, timeout: timeout, completion: completion)
     }
 
     private static func shell(_ command: String, completion: @escaping (Result) -> Void) {

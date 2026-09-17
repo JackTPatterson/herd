@@ -161,6 +161,66 @@ final class AgentRecoveryController: ObservableObject {
         ))
     }
 
+    // MARK: - Hot swap
+
+    /// Running agents Herd can restart in place without losing the
+    /// conversation: it knows their session id and their tab holds one pane.
+    func reloadableAgents() -> [(agent: HerdrAgent, record: AgentSessionRecord)] {
+        let byTerminal = Dictionary(journal.records.map { ($0.terminalId, $0) }, uniquingKeysWith: { first, _ in first })
+        return lastSnapshot.agents.compactMap { agent in
+            guard let terminal = agent.terminalId, let record = byTerminal[terminal],
+                  record.sessionId != nil, let tabId = agent.tabId,
+                  lastSnapshot.panes.filter({ $0.tabId == tabId }).count == 1 else { return nil }
+            return (agent, record)
+        }
+    }
+
+    /// Agents that are running but can't be restarted in place, with why.
+    func unreloadableAgents() -> [(agent: HerdrAgent, reason: String)] {
+        let byTerminal = Dictionary(journal.records.map { ($0.terminalId, $0) }, uniquingKeysWith: { first, _ in first })
+        return lastSnapshot.agents.compactMap { agent in
+            guard let terminal = agent.terminalId else { return nil }
+            guard let record = byTerminal[terminal], record.sessionId != nil else {
+                return (agent, "no session id yet")
+            }
+            if let tabId = agent.tabId, lastSnapshot.panes.filter({ $0.tabId == tabId }).count > 1 {
+                return (agent, "its tab has split panes")
+            }
+            return nil
+        }
+    }
+
+    /// Restarts each agent in its own tab with `--resume`, so it picks up new
+    /// MCP servers, plugins, or skills while keeping the conversation.
+    func reload(_ agents: [(agent: HerdrAgent, record: AgentSessionRecord)]) {
+        guard !agents.isEmpty else { return }
+        let noun = agents.count == 1 ? "1 agent" : "\(agents.count) agents"
+        let toast = ToastCenter.shared.progress("Reloading \(noun)…")
+        let client = self.client
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        DispatchQueue.global(qos: .userInitiated).async {
+            var failures: [String] = []
+            for (agent, record) in agents {
+                do {
+                    try client.call("layout.apply", AgentRecovery.resumeRequest(
+                        record, shell: shell, workspaceId: agent.workspaceId, tabId: agent.tabId
+                    ))
+                } catch {
+                    failures.append("\(record.tabLabel.isEmpty ? record.agent : record.tabLabel): \(error)")
+                }
+            }
+            DispatchQueue.main.async {
+                if failures.isEmpty {
+                    ToastCenter.shared.succeed(toast, "Reloaded \(noun)",
+                                               detail: "Resumed with the new configuration")
+                } else {
+                    ToastCenter.shared.fail(toast, "Reloaded \(agents.count - failures.count) of \(agents.count) agents",
+                                            detail: failures.prefix(3).joined(separator: "\n"))
+                }
+            }
+        }
+    }
+
     nonisolated static func displayName(_ record: AgentSessionRecord) -> String {
         AgentBrand.forAgent(record.agent)?.displayName ?? record.agent
     }

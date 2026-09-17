@@ -8,6 +8,7 @@ struct RootView: View {
     @StateObject private var palette = PaletteModel()
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +39,15 @@ struct RootView: View {
                 RecoveryOverlay(recovery: store.recovery)
             }
             .id(settings.values.themeName)
+        }
+        .onAppear {
+            MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
+            #if DEBUG
+            // Verification hook: open a window at launch without a click.
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == MarketplaceWindow.id {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
+            }
+            #endif
         }
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }

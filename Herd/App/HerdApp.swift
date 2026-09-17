@@ -5,6 +5,7 @@ struct HerdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: HerdrStore
     @StateObject private var ui = UIState()
+    @StateObject private var marketplace: MarketplaceStore
     private let session: HerdrSession?
 
     init() {
@@ -16,6 +17,7 @@ struct HerdApp: App {
         let socketPath = session?.socketPath ?? HerdrClient.socketPath(session: HerdrSession.name)
         let store = HerdrStore(client: HerdrClient(socketPath: socketPath))
         _store = StateObject(wrappedValue: store)
+        _marketplace = StateObject(wrappedValue: MarketplaceStore(herdr: store))
         settings.reloadHerdr = { [weak store] in store?.reloadHerdrConfig(quiet: true) }
         HerdTerminalRuntime.configure(overrides: settings.values.ghosttyConfig + "\n" + Theme.herdShortcutUnbinds)
     }
@@ -36,6 +38,10 @@ struct HerdApp: App {
         Settings {
             SettingsView(store: store)
         }
+        Window("Marketplace", id: "marketplace") {
+            MarketplaceView(store: marketplace)
+        }
+        .defaultSize(width: 900, height: 620)
     }
 }
 
@@ -75,6 +81,9 @@ struct HerdCommands: Commands {
                 .keyboardShortcut("w", modifiers: .command)
         }
         CommandGroup(after: .appSettings) {
+            Button("Marketplace…") { MarketplaceWindow.open() }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            Divider()
             Button("Install Claude Subagent Tabs Hook") { ClaudeHookMenu.install() }
             Button("Remove Claude Subagent Tabs Hook") { ClaudeHookMenu.uninstall() }
         }
@@ -152,5 +161,19 @@ enum ClaudeHookMenu {
         } catch {
             toasts.fail(handle, "Couldn't update ~/.claude/settings.json", detail: String(describing: error))
         }
+    }
+}
+
+
+/// Opens the Marketplace window from menus and the palette. RootView hands
+/// over SwiftUI's `openWindow`, which is only available inside a view.
+@MainActor
+enum MarketplaceWindow {
+    static let id = "marketplace"
+    static var opener: (() -> Void)?
+
+    static func open() {
+        NSApp.activate(ignoringOtherApps: true)
+        opener?()
     }
 }
