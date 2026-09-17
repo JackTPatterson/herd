@@ -63,6 +63,57 @@ browse run logs, and install from GitHub after reviewing herdr's install preview
 confirmation dialog. Plugins that only render into herdr's text sidebar
 (e.g. herdr-radar) have no effect in Herd; Herd's native sidebar covers that.
 
+## Session recovery
+
+Herd journals every agent pane it sees (agent, session id, working folder,
+workspace and tab labels) to `~/Library/Application Support/Herd/agent-sessions.json`.
+Session ids come from herdr's own integration when one is installed
+(Settings → Agents & Recovery), and otherwise from the agents' own files:
+Claude's transcripts under `~/.claude/projects`, Codex's `session_meta`
+rollouts under `~/.codex/sessions`.
+
+When a shutdown, crash, or herdr restart kills sessions that were running the
+last time Herd looked, a panel in the bottom right lists them and resumes the
+ones you pick with `claude --resume <id>` / `codex resume <id>` in their own
+workspaces, recreating a workspace that is gone. Each row can also copy its
+resume command. The palette's **Recover Agent Sessions…** lists past sessions
+at any time. Settings → Agents & Recovery turns the offer off.
+
+## Marketplace
+
+⌘⇧M (or the palette's **Marketplace…**) opens one window for every agent on
+the machine:
+
+| Section | Source | Installs into |
+| --- | --- | --- |
+| MCP Servers | `claude mcp list`, `codex mcp list` | `claude mcp add` / `codex mcp add`, from one definition |
+| Plugins | `<cli> plugin list --json --available` across all configured marketplaces | `<cli> plugin install` |
+| Skills | `~/.agents/skills/<name>/SKILL.md` | symlinked into each agent's `skills/` |
+| Prompts | `~/.agents/prompts/<name>.md` | symlinked into `~/.claude/commands` and `~/.codex/prompts` |
+
+A chip per agent shows where each item is installed; clicking it adds or
+removes it there. Skills and prompts are vendor-neutral: they live once in the
+shared library and are linked into each agent, so an edit reaches all of them.
+Herd can adopt skills and prompts an agent already had, import a folder of
+prompt files, and send a prompt straight to a running agent
+(herdr's `agent.prompt`).
+
+### Hot swap
+
+New MCP servers and plugins only load when an agent starts, so after a change
+the Marketplace offers **Reload Agents**: each running agent is relaunched in
+its own tab with `--resume`, keeping the conversation. Agents whose session id
+Herd doesn't know yet, or whose tab is split across panes, are skipped and
+named. Also in the palette as **Reload Running Agents**.
+
+## Slash menu
+
+Typing `/` at an empty agent prompt opens Herd's own command menu instead of
+the agent's in-terminal list: built-ins for Claude and Codex, your own and the
+project's prompt files, and every installed plugin's commands. ↩ types the
+command into the pane so arguments can follow, ⌘↩ runs it, esc passes through
+what you typed. Settings → Agents & Recovery turns it off.
+
 ## Toasts
 
 Actions whose result isn't immediately visible or that take time show a
