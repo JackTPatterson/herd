@@ -8,6 +8,8 @@ final class PaletteModel: ObservableObject {
     @Published var selection = 0
     @Published var prompt: (title: String, placeholder: String, submit: (String) -> Void)?
     @Published var promptText = ""
+    /// A nested list replacing the main results (e.g. plugin logs).
+    @Published var subList: (title: String, items: [PaletteItem]?)?
 
     private(set) var items: [PaletteItem] = []
     private var itemsById: [String: PaletteItem] = [:]
@@ -29,10 +31,19 @@ final class PaletteModel: ObservableObject {
         selection = 0
         prompt = nil
         promptText = ""
+        subList = nil
     }
 
     var results: [(item: PaletteItem, indices: [Int])] {
-        PaletteRanking.rank(items.map(\.searchable), query: query, filter: chip, recentIds: recents)
+        if let subList {
+            let subItems = subList.items ?? []
+            let byId = Dictionary(subItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let ranked = query.isEmpty
+                ? subItems.map { PaletteRankedResult(id: $0.id, score: 0, titleIndices: []) }
+                : PaletteRanking.rank(subItems.map(\.searchable), query: query, filter: nil, recentIds: [])
+            return ranked.compactMap { r in byId[r.id].map { ($0, r.titleIndices) } }
+        }
+        return PaletteRanking.rank(items.map(\.searchable), query: query, filter: chip, recentIds: recents)
             .compactMap { ranked in itemsById[ranked.id].map { ($0, ranked.titleIndices) } }
     }
 
@@ -51,6 +62,14 @@ final class PaletteModel: ObservableObject {
         case .run(let run):
             run()
             return true
+        case .list(let title, let load):
+            subList = (title, nil)
+            query = ""
+            load { [weak self] items in
+                guard let self, self.subList?.title == title else { return }
+                self.subList = (title, items)
+            }
+            return false
         case .prompt(let title, let placeholder, let initial, let submit):
             prompt = (title, placeholder, submit)
             promptText = initial
@@ -89,8 +108,11 @@ struct CommandPaletteView: View {
             if let prompt = model.prompt {
                 promptField(prompt.title, placeholder: prompt.placeholder)
             } else {
+                if let subList = model.subList {
+                    subListHeader(subList.title, loading: subList.items == nil)
+                }
                 searchField
-                chips
+                if model.subList == nil { chips }
                 Rectangle().fill(Theme.divider).frame(height: 1)
                 resultsList
                 footer
@@ -110,7 +132,10 @@ struct CommandPaletteView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
-            TextField("Search actions, workspaces, tabs, agents, projects…", text: $model.query)
+            TextField(
+                model.subList.map { "Filter \($0.title.lowercased())…" } ?? "Search actions, workspaces, tabs, agents, projects, plugins…",
+                text: $model.query
+            )
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textPrimary)
@@ -124,7 +149,15 @@ struct CommandPaletteView: View {
                     press.modifiers.contains(.control) ? move(1) : .ignored
                 }
                 .onKeyPress(.tab) { cycleChip(); return .handled }
-                .onKeyPress(.escape) { onClose(); return .handled }
+                .onKeyPress(.escape) {
+                    if model.subList != nil {
+                        model.subList = nil
+                        model.query = ""
+                    } else {
+                        onClose()
+                    }
+                    return .handled
+                }
                 .onSubmit(activateSelection)
         }
         .padding(.horizontal, 16)
@@ -213,6 +246,7 @@ struct CommandPaletteView: View {
     }
 
     private func showsHeader(at index: Int, in results: [(item: PaletteItem, indices: [Int])]) -> Bool {
+        guard model.subList == nil else { return false }
         guard model.query.isEmpty || PaletteKind.parse(model.query).query.isEmpty else { return false }
         if index == 0 { return true }
         let recentCount = recentPrefixCount(results)
@@ -255,6 +289,25 @@ struct CommandPaletteView: View {
             Keycap(text: key)
             Text(label).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
         }
+    }
+
+    private func subListHeader(_ title: String, loading: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                model.subList = nil
+                model.query = ""
+                fieldFocused = true
+            } label: {
+                Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.textSecondary)
+            Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textSecondary)
+            if loading { ProgressView().controlSize(.mini) }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 
     // MARK: Prompt

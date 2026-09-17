@@ -21,6 +21,16 @@ struct RootView: View {
                 }
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if let error = store.lastError {
+                ErrorToast(message: error) { store.lastError = nil }
+                    .padding(16)
+                    .task(id: error) {
+                        try? await Task.sleep(for: .seconds(6))
+                        if store.lastError == error { store.lastError = nil }
+                    }
+            }
+        }
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }
@@ -30,10 +40,16 @@ struct RootView: View {
         .onChange(of: ui.paletteVisible) { _, visible in
             DebugSnapshot.overlayVisible = visible
             if visible {
+                store.refreshPlugins()
                 palette.reset()
                 palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
             } else {
                 HerdTerminalRuntime.focusTerminal()
+            }
+        }
+        .onChange(of: store.plugins) { _, _ in
+            if ui.paletteVisible, palette.prompt == nil {
+                palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
             }
         }
         .onChange(of: store.snapshot) { _, _ in
@@ -72,6 +88,33 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.terminalBackground)
         }
+    }
+}
+
+private struct ErrorToast: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color(hex: AgentStateColor.blocked))
+            Text(message)
+                .font(Theme.uiFont)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(3)
+                .frame(maxWidth: 360, alignment: .leading)
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(10)
+        .background(Theme.card)
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
     }
 }
 

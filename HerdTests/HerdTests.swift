@@ -249,3 +249,29 @@ final class PaletteRankingTests: XCTestCase {
         XCTAssertEqual(PaletteRanking.recording("b", in: ["a", "b", "c"]), ["b", "a", "c"])
     }
 }
+
+final class HerdrPluginTests: XCTestCase {
+    func testDecodesPluginListAndLogs() throws {
+        // Shape captured from herdr 0.9.1 `plugin.list` / `plugin.log.list`.
+        let plugins = """
+        [{"plugin_id":"herd.sample","name":"Herd Sample","version":"0.1.0","enabled":true,"platforms":["macos"],
+          "actions":[{"id":"stamp","title":"Write a timestamp file","contexts":["global"],"command":["/bin/sh"]}],
+          "panes":[{"id":"clock","title":"Clock","placement":"overlay","command":["/bin/sh"]}],
+          "source":{"kind":"local"}}]
+        """
+        let decoded = try JSONDecoder().decode([HerdrPlugin].self, from: Data(plugins.utf8))
+        XCTAssertEqual(decoded.first?.actions.first?.id, "stamp")
+        XCTAssertEqual(decoded.first?.panes.first?.placement, "overlay")
+        XCTAssertEqual(decoded.first?.isGitHubInstall, false)
+
+        let logs = """
+        [{"log_id":"plugin-log-1","plugin_id":"herd.sample","action_id":"stamp","status":"succeeded",
+          "started_unix_ms":1789663888058,"exit_code":0,"stdout":"","stderr":"","command":["/bin/sh"]}]
+        """
+        XCTAssertEqual(try JSONDecoder().decode([HerdrPluginLog].self, from: Data(logs.utf8)).first?.exitCode, 0)
+    }
+
+    func testPluginPrefix() {
+        XCTAssertEqual(PaletteKind.parse("!stamp").filter, .plugin)
+    }
+}

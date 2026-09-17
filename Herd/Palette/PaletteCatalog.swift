@@ -13,6 +13,8 @@ struct PaletteItem: Identifiable {
         case run(() -> Void)
         /// Ask for text, then run with it (rename, new worktree, …).
         case prompt(title: String, placeholder: String, initial: String, submit: (String) -> Void)
+        /// Replace the list with items loaded asynchronously (plugin logs, …).
+        case list(title: String, load: (@escaping ([PaletteItem]) -> Void) -> Void)
     }
 
     let id: String
@@ -38,6 +40,7 @@ enum PaletteCatalog {
             + tabs(store: store)
             + agents(store: store)
             + projects(store: store)
+            + plugins(store: store)
     }
 
     // MARK: Actions
@@ -176,6 +179,153 @@ enum PaletteCatalog {
                 icon: .symbol(open ? "folder.fill" : "folder"),
                 effect: .run { store.openProject(path: path) }
             )
+        }
+    }
+
+    // MARK: Plugins
+
+    static func plugins(store: HerdrStore) -> [PaletteItem] {
+        var items: [PaletteItem] = []
+        for plugin in store.plugins {
+            let owner = [plugin.name, plugin.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " ")
+            if plugin.enabled {
+                for action in plugin.actions {
+                    items.append(PaletteItem(
+                        id: "plugin.\(plugin.pluginId).action.\(action.id)", kind: .plugin, title: action.title,
+                        subtitle: [owner, action.description].compactMap { $0 }.joined(separator: " · "),
+                        keywords: [plugin.pluginId, action.id],
+                        icon: .symbol("puzzlepiece.extension"),
+                        effect: .run { store.invokePluginAction(pluginId: plugin.pluginId, actionId: action.id) }
+                    ))
+                }
+                for pane in plugin.panes {
+                    items.append(PaletteItem(
+                        id: "plugin.\(plugin.pluginId).pane.\(pane.id)", kind: .plugin, title: "Open \(pane.title)",
+                        subtitle: [owner, pane.placement.map { "\($0) pane" }, pane.description]
+                            .compactMap { $0 }.joined(separator: " · "),
+                        keywords: [plugin.pluginId, pane.id, "pane"],
+                        icon: .symbol("rectangle.on.rectangle"),
+                        effect: .run { store.openPluginPane(pluginId: plugin.pluginId, paneId: pane.id, placement: pane.placement) }
+                    ))
+                }
+            }
+            items.append(PaletteItem(
+                id: "plugin.\(plugin.pluginId).toggle", kind: .plugin,
+                title: "\(plugin.enabled ? "Disable" : "Enable") \(plugin.name)",
+                subtitle: plugin.description ?? plugin.pluginId,
+                keywords: [plugin.pluginId, "plugin"],
+                icon: .symbol(plugin.enabled ? "pause.circle" : "play.circle"),
+                effect: .run { store.setPluginEnabled(plugin.pluginId, !plugin.enabled) }
+            ))
+            items.append(PaletteItem(
+                id: "plugin.\(plugin.pluginId).logs", kind: .plugin, title: "Show \(plugin.name) Logs",
+                subtitle: "Recent action, event, and startup runs",
+                keywords: [plugin.pluginId, "log", "output"],
+                icon: .symbol("list.bullet.rectangle"),
+                effect: logsEffect(store: store, pluginId: plugin.pluginId, title: "\(plugin.name) Logs")
+            ))
+            if plugin.isGitHubInstall, let herdr = HerdrSession.locateHerdr() {
+                items.append(PaletteItem(
+                    id: "plugin.\(plugin.pluginId).uninstall", kind: .plugin, title: "Uninstall \(plugin.name)",
+                    subtitle: plugin.pluginId, keywords: ["remove", "delete"],
+                    icon: .symbol("trash"),
+                    effect: .run {
+                        store.runPluginCommandInTab(label: "Uninstall \(plugin.name)", arguments: ["uninstall", plugin.pluginId], herdrPath: herdr)
+                    }
+                ))
+            } else {
+                items.append(PaletteItem(
+                    id: "plugin.\(plugin.pluginId).unlink", kind: .plugin, title: "Unlink \(plugin.name)",
+                    subtitle: plugin.pluginId, keywords: ["remove", "local"],
+                    icon: .symbol("link.badge.plus"),
+                    effect: .run { store.unlinkPlugin(plugin.pluginId) }
+                ))
+            }
+        }
+
+        if let herdr = HerdrSession.locateHerdr() {
+            items.append(PaletteItem(
+                id: "plugin.install", kind: .plugin, title: "Install Plugin from GitHub…",
+                subtitle: "owner/repo[/subdir] · review herdr's preview before confirming",
+                keywords: ["add", "marketplace"],
+                icon: .symbol("square.and.arrow.down"),
+                effect: .prompt(title: "Install Plugin", placeholder: "owner/repo", initial: "") { repo in
+                    store.runPluginCommandInTab(label: "Install \(repo)", arguments: ["install", repo], herdrPath: herdr)
+                }
+            ))
+        }
+        items.append(PaletteItem(
+            id: "plugin.link", kind: .plugin, title: "Link Local Plugin Folder…",
+            subtitle: "A folder containing herdr-plugin.toml", keywords: ["add", "develop"],
+            icon: .symbol("folder.badge.gearshape"),
+            effect: .run { linkPluginFolder(store: store) }
+        ))
+        items.append(PaletteItem(
+            id: "plugin.logs", kind: .plugin, title: "Show All Plugin Logs",
+            keywords: ["output", "debug"],
+            icon: .symbol("list.bullet.rectangle"),
+            effect: logsEffect(store: store, pluginId: nil, title: "Plugin Logs")
+        ))
+        items.append(PaletteItem(
+            id: "plugin.marketplace", kind: .plugin, title: "Browse Plugin Marketplace",
+            subtitle: "herdr.dev/plugins", keywords: ["discover"],
+            icon: .symbol("safari"),
+            effect: .run { NSWorkspace.shared.open(URL(string: "https://herdr.dev/plugins/")!) }
+        ))
+        return items
+    }
+
+    static func logsEffect(store: HerdrStore, pluginId: String?, title: String) -> PaletteItem.Effect {
+        .list(title: title) { deliver in
+            store.pluginLogs(pluginId: pluginId) { logs in
+                deliver(logs.sorted { $0.startedUnixMs > $1.startedUnixMs }.map(logItem))
+            }
+        }
+    }
+
+    static func logItem(_ log: HerdrPluginLog) -> PaletteItem {
+        let started = Date(timeIntervalSince1970: TimeInterval(log.startedUnixMs) / 1000)
+        let what = log.actionId.map { "action \($0)" } ?? log.event.map { "event \($0)" } ?? "startup"
+        let exit = log.exitCode.map { "exit \($0)" }
+        let output = [log.stderr, log.stdout, log.error].compactMap { $0 }
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let symbol: String = switch log.status {
+        case "succeeded": "checkmark.circle"
+        case "failed": "xmark.octagon"
+        default: "clock"
+        }
+        return PaletteItem(
+            id: "pluginlog.\(log.logId)", kind: .plugin,
+            title: "\(log.pluginId) · \(what)",
+            subtitle: [log.status, exit, started.formatted(date: .omitted, time: .standard),
+                       output.map { String($0.split(separator: "\n").first ?? "") }]
+                .compactMap { $0 }.joined(separator: " · "),
+            icon: .symbol(symbol),
+            effect: .run {
+                let alert = NSAlert()
+                alert.messageText = "\(log.pluginId) · \(what)"
+                alert.informativeText = """
+                Status: \(log.status)\(exit.map { " (\($0))" } ?? "")
+                Started: \(started.formatted())
+
+                stdout:
+                \(log.stdout?.isEmpty == false ? log.stdout! : "(empty)")
+
+                stderr:
+                \(log.stderr?.isEmpty == false ? log.stderr! : "(empty)")\(log.error.map { "\n\nerror: \($0)" } ?? "")
+                """
+                alert.runModal()
+            }
+        )
+    }
+
+    static func linkPluginFolder(store: HerdrStore) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "Choose a folder containing herdr-plugin.toml"
+        if panel.runModal() == .OK, let url = panel.url {
+            store.linkPlugin(path: url.path)
         }
     }
 

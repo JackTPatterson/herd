@@ -47,10 +47,21 @@ fuzzy-searches everything:
 | Tabs | `#` | tabs across all workspaces, including subagent tabs |
 | Agents | `@` | running agents; jumps to their pane |
 | Projects | `/` | folders under ~/Developer, ~/Projects, ~/code, ~/src; opens or focuses a workspace |
+| Plugins | `!` | herdr plugin actions and panes, enable/disable, logs, unlink/uninstall, install from GitHub, link a local folder, marketplace |
 
 ↑↓ or ⌃N/⌃P to move, ↩ to run, ⇥ to cycle filters, esc to close. With an empty
 query it shows your 3 most recent picks first. Rename Tab/Workspace and New
 Worktree ask for text inline.
+
+## Plugins
+
+Herd runs herdr plugins (event hooks, startup commands, panes, link handlers)
+unchanged, since herdr's server owns them. The palette's `!` filter adds what
+herdr's hidden UI would otherwise provide: invoke plugin actions (with the
+focused workspace/tab/pane as context), open plugin panes, enable/disable,
+browse run logs, and install from GitHub in a tab where you review herdr's
+preview before confirming. Plugins that only render into herdr's text sidebar
+(e.g. herdr-radar) have no effect in Herd; Herd's native sidebar covers that.
 
 ## Shortcuts
 

@@ -161,3 +161,75 @@ struct HerdrSnapshot: Codable, Equatable {
         return (ordered.first(where: \.focused) ?? ordered.first).flatMap { $0.foregroundCwd ?? $0.cwd }
     }
 }
+
+/// An installed or linked herdr plugin (`plugin.list`).
+struct HerdrPlugin: Decodable, Equatable, Identifiable {
+    struct Action: Decodable, Equatable {
+        let id: String
+        let title: String
+        let description: String?
+        let contexts: [String]?
+    }
+
+    struct Pane: Decodable, Equatable {
+        let id: String
+        let title: String
+        let description: String?
+        let placement: String?
+    }
+
+    struct Source: Decodable, Equatable {
+        let kind: String?
+        let owner: String?
+        let repo: String?
+    }
+
+    let pluginId: String
+    let name: String
+    let version: String?
+    let description: String?
+    let enabled: Bool
+    let actions: [Action]
+    let panes: [Pane]
+    let source: Source?
+
+    var id: String { pluginId }
+    var isGitHubInstall: Bool { source?.kind == "github" }
+
+    enum CodingKeys: String, CodingKey {
+        case pluginId = "plugin_id", name, version, description, enabled, actions, panes, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pluginId = try c.decode(String.self, forKey: .pluginId)
+        name = (try? c.decode(String.self, forKey: .name)) ?? pluginId
+        version = try? c.decode(String.self, forKey: .version)
+        description = try? c.decode(String.self, forKey: .description)
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? true
+        actions = (try? c.decode([Action].self, forKey: .actions)) ?? []
+        panes = (try? c.decode([Pane].self, forKey: .panes)) ?? []
+        source = try? c.decode(Source.self, forKey: .source)
+    }
+}
+
+/// One plugin command run (`plugin.log.list`).
+struct HerdrPluginLog: Decodable, Equatable, Identifiable {
+    let logId: String
+    let pluginId: String
+    let actionId: String?
+    let event: String?
+    let status: String
+    let startedUnixMs: UInt64
+    let exitCode: Int?
+    let stdout: String?
+    let stderr: String?
+    let error: String?
+
+    var id: String { logId }
+
+    enum CodingKeys: String, CodingKey {
+        case logId = "log_id", pluginId = "plugin_id", actionId = "action_id", event, status
+        case startedUnixMs = "started_unix_ms", exitCode = "exit_code", stdout, stderr, error
+    }
+}

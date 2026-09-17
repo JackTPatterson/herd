@@ -2,7 +2,7 @@ import Foundation
 
 /// Kinds of palette entries; also the filter chips (Warp's QueryFilter).
 enum PaletteKind: String, CaseIterable, Identifiable {
-    case action, workspace, tab, agent, project
+    case action, workspace, tab, agent, project, plugin
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum PaletteKind: String, CaseIterable, Identifiable {
         case .tab: return "Tabs"
         case .agent: return "Agents"
         case .project: return "Projects"
+        case .plugin: return "Plugins"
         }
     }
 
@@ -24,6 +25,7 @@ enum PaletteKind: String, CaseIterable, Identifiable {
         case .tab: return "#"
         case .agent: return "@"
         case .project: return "/"
+        case .plugin: return "!"
         }
     }
 
@@ -74,7 +76,7 @@ enum PaletteRanking {
                 .sorted { recency[$0.id]! < recency[$1.id]! }
                 .prefix(filter == nil ? zeroStateRecents : recentIds.count)
             let recentSet = Set(recent.map(\.id))
-            let order: [PaletteKind] = [.workspace, .agent, .tab, .project, .action]
+            let order: [PaletteKind] = [.workspace, .agent, .tab, .project, .plugin, .action]
             let rest = candidates
                 .filter { !recentSet.contains($0.id) }
                 .enumerated()

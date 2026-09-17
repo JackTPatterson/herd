@@ -9,6 +9,8 @@ final class HerdrStore: ObservableObject {
     @Published private(set) var groups: [ProjectGroup] = []
     /// Git branch per workspace id, read from `.git/HEAD` on each snapshot.
     @Published private(set) var branches: [String: String] = [:]
+    /// Plugins installed in Herd's herdr session; refreshed when the palette opens.
+    @Published private(set) var plugins: [HerdrPlugin] = []
     @Published private(set) var isConnected = false
     @Published var lastError: String?
 
@@ -244,6 +246,122 @@ final class HerdrStore: ObservableObject {
         let target = max(0, min(tabs.count - 1, index + offset))
         guard target != index else { return }
         perform("tab.move", ["tab_id": tabs[index].tabId, "insert_index": target])
+    }
+
+    // MARK: - Plugins
+
+    func refreshPlugins() {
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let plugins: [HerdrPlugin]
+            do {
+                let result = try client.call("plugin.list")
+                let data = try JSONSerialization.data(withJSONObject: result["plugins"] ?? [])
+                plugins = try JSONDecoder().decode([HerdrPlugin].self, from: data)
+            } catch {
+                DispatchQueue.main.async { self?.lastError = String(describing: error) }
+                return
+            }
+            DispatchQueue.main.async {
+                if self?.plugins != plugins { self?.plugins = plugins }
+            }
+        }
+    }
+
+    /// Context herdr passes to plugin commands, matching what herdr's own UI sends.
+    var pluginInvocationContext: [String: Any] {
+        var context: [String: Any] = ["invocation_source": "herd-palette"]
+        if let workspace = focusedWorkspace {
+            context["workspace_id"] = workspace.workspaceId
+            context["workspace_label"] = workspace.label
+            if let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) { context["workspace_cwd"] = cwd }
+        }
+        if let tab = focusedWorkspaceTabs.first(where: { $0.tabId == snapshot.focusedTabId }) {
+            context["tab_id"] = tab.tabId
+            context["tab_label"] = tab.label
+        }
+        if let paneId = focusedPaneId {
+            context["focused_pane_id"] = paneId
+            if let pane = snapshot.panes.first(where: { $0.paneId == paneId }) {
+                if let cwd = pane.foregroundCwd ?? pane.cwd { context["focused_pane_cwd"] = cwd }
+                context["focused_pane_status"] = pane.agentStatus.rawValue
+            }
+            if let agent = snapshot.agents.first(where: { $0.paneId == paneId })?.agent {
+                context["focused_pane_agent"] = agent
+            }
+        }
+        return context
+    }
+
+    func invokePluginAction(pluginId: String, actionId: String) {
+        perform("plugin.action.invoke", [
+            "plugin_id": pluginId, "action_id": actionId, "context": pluginInvocationContext,
+        ])
+    }
+
+    func openPluginPane(pluginId: String, paneId: String, placement: String?) {
+        var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": paneId, "focus": true]
+        // Overlay and popup panes always attach to the active pane; herdr
+        // rejects an explicit target for them.
+        if let pane = focusedPaneId, placement == "split" || placement == "tab" || placement == "zoomed" {
+            params["target_pane_id"] = pane
+        }
+        perform("plugin.pane.open", params)
+    }
+
+    private func performThenRefreshPlugins(_ method: String, _ params: [String: Any]) {
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try client.call(method, params)
+            } catch {
+                DispatchQueue.main.async { self?.lastError = String(describing: error) }
+            }
+            DispatchQueue.main.async { self?.refreshPlugins() }
+        }
+    }
+
+    func setPluginEnabled(_ pluginId: String, _ enabled: Bool) {
+        performThenRefreshPlugins(enabled ? "plugin.enable" : "plugin.disable", ["plugin_id": pluginId])
+    }
+
+    func unlinkPlugin(_ pluginId: String) {
+        performThenRefreshPlugins("plugin.unlink", ["plugin_id": pluginId])
+    }
+
+    func linkPlugin(path: String) {
+        performThenRefreshPlugins("plugin.link", ["path": path])
+    }
+
+    /// Runs a herdr plugin CLI command interactively in a new tab, so the user
+    /// reviews herdr's install preview and confirms it themselves.
+    func runPluginCommandInTab(label: String, arguments: [String], herdrPath: String) {
+        let command = ([herdrPath, "--session", HerdrSession.name, "plugin"] + arguments)
+            .map(shellQuote).joined(separator: " ")
+        var pane: [String: Any] = [
+            "type": "pane",
+            "label": label,
+            "command": ["/bin/zsh", "-lc", "\(command); echo; read -k1 '?Press any key to close this tab'"],
+        ]
+        if let workspace = focusedWorkspace,
+           let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) {
+            pane["cwd"] = cwd
+        }
+        var params: [String: Any] = ["tab_label": label, "focus": true, "root": pane]
+        if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
+        perform("layout.apply", params)
+    }
+
+    func pluginLogs(pluginId: String?, completion: @escaping ([HerdrPluginLog]) -> Void) {
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async {
+            var params: [String: Any] = ["limit": 50]
+            if let pluginId { params["plugin_id"] = pluginId }
+            let logs = (try? client.call("plugin.log.list", params))
+                .flatMap { try? JSONSerialization.data(withJSONObject: $0["logs"] ?? []) }
+                .flatMap { try? JSONDecoder().decode([HerdrPluginLog].self, from: $0) } ?? []
+            DispatchQueue.main.async { completion(logs) }
+        }
     }
 
     // MARK: - Presentation helpers
